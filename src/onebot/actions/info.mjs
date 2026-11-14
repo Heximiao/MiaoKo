@@ -7,5 +7,5 @@ export function getStatus() {
 }
 
 export function getVersionInfo() {
-    return { app_name: 'MiaoKo', app_version: '0.1.0', protocol_version: 'v11' };
+    return { app_name: 'MiaoKo', app_version: '0.1.1', protocol_version: 'v11' };
 }

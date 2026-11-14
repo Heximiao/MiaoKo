@@ -26,6 +26,7 @@ import { ActionError } from '../onebot/actions/shared.mjs';
 import { InvalidImage, prepareMedia } from '../qq/actions/messages/image-files.mjs';
 import { createReceivedImages, mediaBaseUrl, serveMedia } from './received-images.mjs';
 import { createOneBotLogs, describeOneBotEvent, writeTerminal } from './onebot-logs.mjs';
+import { createSendQueue } from './send-queue.mjs';
 import { createWebUIAuth } from './webui-auth.mjs';
 import { defaultBindAddress, defaultPort, logLevels, openWebUISettings, validPort, WebUIError } from './webui-settings.mjs';
 
@@ -115,7 +116,8 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
     const onebot = createOneBotConfig(fileURLToPath(new URL('../../data/onebot.json', import.meta.url)));
     const active = new Map();
     const bindings = new Map();
-    const sending = new Set();
+    const enqueueSend = createSendQueue();
+    const memberLists = new Map();
     const listingGroupFiles = new Set();
     const host = '127.0.0.1:' + port;
     const localOneBot = request => request.socket.remoteAddress === '127.0.0.1' && request.headers.host === host;
@@ -143,6 +145,18 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
     }
 
     async function requestOneBot(account, type, params) {
+        if (type === 'get-group-member-list') {
+            const key = account + ':' + params.group + ':' + params.noCache;
+            const current = memberLists.get(key);
+            if (current) return current;
+            const pending = request(account, type, params);
+            memberLists.set(key, pending);
+            try {
+                return await pending;
+            } finally {
+                memberLists.delete(key);
+            }
+        }
         if (type !== 'get-group-root-files') return request(account, type, params);
         if (listingGroupFiles.has(account)) throw new ActionError(1500, 'QQ is already listing group files for this account');
         // QQ can return an empty page without a group identifier.
@@ -160,6 +174,26 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
     const replyRecords = createReplyRecords();
     const format = (account, record, location, options) =>
         toOneBotRecord(account, record, { ids, images, request, replyRecords }, location, options);
+
+    function sendWithMedia(account, segments, send, cleanupError = '图片暂存清理失败') {
+        return enqueueSend(account, async () => {
+            if (shuttingDown) throw new ActionError(1500, 'MiaoKo is shutting down');
+            let prepared;
+            let outcome;
+            try {
+                if (segments) prepared = await prepareMedia(join(mediaRoot, 'outgoing'), segments);
+                outcome = await send(prepared?.segments);
+                return outcome;
+            } catch (error) {
+                if (error instanceof InvalidImage) throw new ActionError(1400, error.message);
+                throw error;
+            } finally {
+                await prepared?.close({ uncertain: outcome?.status === 'unknown' }).catch(() =>
+                    logs.add('WARN', 'Media', cleanupError));
+            }
+        });
+    }
+
     const dispatch = createActions({
         ids: { get: (...args) => ids.get(...args), resolve: (...args) => ids.resolve(...args) },
         accounts: () => [...bindings.keys()],
@@ -168,69 +202,30 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
         pendingRequests,
         formatRecord: format,
         replyRecords,
-        async uploadGroupAlbum(account, { group, albumId, albumName, file }) {
-            if (sending.has(account)) throw new ActionError(1500, 'QQ is already sending for this account');
-            sending.add(account);
-            let prepared;
-            let outcome;
-            try {
-                prepared = await prepareMedia(join(mediaRoot, 'outgoing'), [{ type: 'image', data: { file } }]);
-                const { path, md5, fileName, size } = prepared.segments[0].data;
-                outcome = await request(account, 'upload-group-album', { group, albumId, albumName, path, md5, fileName, size });
-                return outcome;
-            } catch (error) {
-                if (error instanceof InvalidImage) throw new ActionError(1400, error.message);
-                throw error;
-            } finally {
-                sending.delete(account);
-                await prepared?.close({ uncertain: outcome?.status === 'unknown' }).catch(() =>
-                    logs.add('WARN', 'Media', '图片暂存清理失败'));
-            }
+        uploadGroupAlbum(account, { group, albumId, albumName, file }) {
+            return sendWithMedia(account, [{ type: 'image', data: { file } }], ([{ data }]) => {
+                const { path, md5, fileName, size } = data;
+                return request(account, 'upload-group-album', { group, albumId, albumName, path, md5, fileName, size });
+            });
         },
-        async sendForwardBatch(account, params) {
-            if (sending.has(account)) throw new ActionError(1500, 'QQ is already sending for this account');
-            sending.add(account);
-            let prepared;
-            let outcome;
-            try {
+        sendForwardBatch(account, params) {
+            const segments = params.nodes?.flatMap(node => node.segments);
+            return sendWithMedia(account, segments, prepared => {
                 if (params.nodes) {
-                    prepared = await prepareMedia(join(mediaRoot, 'outgoing'), params.nodes.flatMap(node => node.segments));
                     let offset = 0;
                     const nodes = params.nodes.map(({ nickname, segments }) => {
                         const start = offset;
                         offset += segments.length;
-                        return { nickname, segments: prepared.segments.slice(start, offset) };
+                        return { nickname, segments: prepared.slice(start, offset) };
                     });
                     params = { ...params, nodes };
                 }
-                outcome = await request(account, 'send-forward-message', params);
-                return outcome;
-            } catch (error) {
-                if (error instanceof InvalidImage) throw new ActionError(1400, error.message);
-                throw error;
-            } finally {
-                sending.delete(account);
-                await prepared?.close({ uncertain: outcome?.status === 'unknown' }).catch(() =>
-                    logs.add('WARN', 'Media', '转发媒体暂存清理失败'));
-            }
+                return request(account, 'send-forward-message', params);
+            }, '转发媒体暂存清理失败');
         },
-        async sendMessage(account, kind, peer, segments) {
-            if (sending.has(account)) throw new ActionError(1500, 'QQ is already sending for this account');
-            sending.add(account);
-            let prepared;
-            let outcome;
-            try {
-                prepared = await prepareMedia(join(mediaRoot, 'outgoing'), segments);
-                outcome = await request(account, 'send-message', { kind, peer, segments: prepared.segments });
-                return outcome;
-            } catch (error) {
-                if (error instanceof InvalidImage) throw new ActionError(1400, error.message);
-                throw error;
-            } finally {
-                sending.delete(account);
-                await prepared?.close({ uncertain: outcome?.status === 'unknown' }).catch(() =>
-                    logs.add('WARN', 'Media', '图片暂存清理失败'));
-            }
+        sendMessage(account, kind, peer, segments) {
+            return sendWithMedia(account, segments, prepared =>
+                request(account, 'send-message', { kind, peer, segments: prepared }));
         },
         async readMessage(account, reference) {
             const result = await request(account, 'get-message', { reference });
@@ -249,8 +244,9 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
             const candidate = account ?? packet?.params?.self_id;
             const identity = typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
             const owner = /^[1-9]\d{4,11}$/.test(identity) ? ` · QQ ${identity}` : '';
+            const error = result.retcode !== 0 && result.message ? ` · ${result.message.slice(0, 240)}` : '';
             logs.add(result.retcode === 0 ? 'SUCCESS' : 'WARN', 'Action',
-                `${transport}${owner} · ${action} · retcode ${result.retcode} · ${Math.round(performance.now() - started)} ms`);
+                `${transport}${owner} · ${action} · retcode ${result.retcode} · ${Math.round(performance.now() - started)} ms${error}`);
             return result;
         }, { supports: dispatch.supports });
     }
@@ -266,7 +262,7 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
             else if (state === 'connected') retryWarnings.delete(key);
             logs.add(repeatedRetry ? 'DEBUG' : state === 'retrying' || state === 'invalid' ? 'WARN'
                 : state === 'connected' ? 'SUCCESS' : 'DEBUG',
-                'WebSocket', `QQ ${account} · ${labels[state]}${detail ? ` · ${detail}` : ''}`);
+                'WebSocket', `QQ ${account} · 端点 ${id} · ${labels[state]}${detail ? ` · ${detail}` : ''}`);
         },
     }));
     const forward = createOutgoingClients(id => createForwardWs({

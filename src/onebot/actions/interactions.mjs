@@ -54,6 +54,25 @@ export async function sendLike(params, account, { request }) {
     return null;
 }
 
+function profileLikePageParam(value, name, minimum, maximum) {
+    if ((typeof value !== 'number' && typeof value !== 'string') ||
+        !/^\d+$/.test(String(value)) || !Number.isSafeInteger(Number(value)) ||
+        Number(value) < minimum || Number(value) > maximum) {
+        throw new ActionError(1400, `${name} must be between ${minimum} and ${maximum}`);
+    }
+    return Number(value);
+}
+
+export async function getProfileLike(params, account, { request }) {
+    const { user_id: userId = account, start = 0, count = 10 } = params;
+    const outcome = await interact(account, request, 'get-profile-like', {
+        user: qqId(userId, 'user_id'),
+        start: profileLikePageParam(start, 'start', 0, 0x7fffffff),
+        count: profileLikePageParam(count, 'count', 1, 100),
+    });
+    return outcome.profile;
+}
+
 export async function setMsgEmojiLike(params, account, { ids, request }) {
     const reference = ids.resolve(account, oneBotMessageId(params.message_id));
     if (!reference) throw new ActionError(1404, 'Message was not found for this account');

@@ -6,6 +6,12 @@ import { openMessagePipe } from '../../ipc/pipe.mjs';
 const ACCOUNT_CHECK_INTERVAL_MS = 3000;
 const ACTIVE_CHECK_MIN_INTERVAL_MS = 350;
 const MESSAGE_BATCH_MS = 35;
+const MAX_ACTIVE_ACTIONS = 4;
+const MAX_ACTIVE_PROFILE_LIKES = 2;
+const MAX_WAITING_ACTIONS = 32;
+const MAX_WAITING_PROFILE_LIKES = 16;
+const ACTION_QUEUE_TIMEOUT_MS = 10000;
+const serialActions = new Set(['send-message', 'send-poke']);
 
 export async function startCapture({ pid, python, capture, seconds, inbox, onAttached, onMessages, onDetached,
     onNoticeListener }) {
@@ -31,6 +37,7 @@ export async function startCapture({ pid, python, capture, seconds, inbox, onAtt
     let duplex = false;
     let detached = false;
     const pending = new Map();
+    const waiting = [];
     let stopping = false;
 
     function checkAccount() {
@@ -63,9 +70,38 @@ export async function startCapture({ pid, python, capture, seconds, inbox, onAtt
         clearTimeout(action.timer);
         pending.delete(id);
         action.resolve(outcome);
+        pumpActions();
+    }
+
+    function stopActions() {
+        stopping = true;
+        for (const action of waiting.splice(0)) {
+            clearTimeout(action.timer);
+            action.resolve({ status: 'failed', error: 'QQ session closed before starting the action' });
+        }
+    }
+
+    function pumpActions() {
+        while (!stopping && !child.stdin.destroyed && !child.stdin.writableEnded && pending.size < MAX_ACTIVE_ACTIONS) {
+            const activeTypes = [...pending.values()].map(action => action.type);
+            const activeLikes = activeTypes.filter(type => type === 'send-profile-like').length;
+            const index = waiting.findIndex(({ type }) =>
+                (!serialActions.has(type) || !activeTypes.includes(type)) &&
+                (type !== 'send-profile-like' || activeLikes < MAX_ACTIVE_PROFILE_LIKES));
+            if (index === -1) return;
+            const [action] = waiting.splice(index, 1);
+            clearTimeout(action.timer);
+            const { id, type, params } = action;
+            action.timer = setTimeout(() => settle(id, {
+                status: 'unknown', error: 'QQ did not confirm the action',
+            }), 35000);
+            pending.set(id, action);
+            child.stdin.write(JSON.stringify({ type, id, selfId, params }) + '\n');
+        }
     }
 
     child.stdin.on('error', error => {
+        stopActions();
         console.error('PID %d: %s', pid, error.message);
         inbox.close(pid, 'error');
     });
@@ -94,7 +130,7 @@ export async function startCapture({ pid, python, capture, seconds, inbox, onAtt
                     const messages = inbox.completeCheck(pid, event.selfId);
                     if (messages?.length) onMessages?.(selfId, pid, messages);
                     if (event.selfId !== selfId) {
-                        stopping = true;
+                        stopActions();
                         onDetached?.(selfId, pid);
                     }
                     scheduleCheck();
@@ -124,7 +160,7 @@ export async function startCapture({ pid, python, capture, seconds, inbox, onAtt
     });
     const done = new Promise((resolve, reject) => {
         child.once('close', code => {
-            stopping = true;
+            stopActions();
             stopTimers();
             for (const id of pending.keys()) settle(id, { status: 'unknown', error: 'QQ session closed during action' });
             if (selfId) onDetached?.(selfId, pid);
@@ -136,21 +172,28 @@ export async function startCapture({ pid, python, capture, seconds, inbox, onAtt
         done,
         request(expectedAccount, type, params) {
             if (stopping || !duplex || selfId !== expectedAccount || child.stdin.destroyed ||
-                child.stdin.writableEnded || pending.size >= 5 ||
-                (['send-message', 'send-poke'].includes(type) && [...pending.values()].some(action => action.type === type))) {
-                return { status: 'failed', error: 'QQ session is busy or unavailable' };
+                child.stdin.writableEnded) {
+                return { status: 'failed', error: 'QQ session is unavailable' };
             }
-            const id = randomUUID();
+            if (waiting.length >= MAX_WAITING_ACTIONS) {
+                return { status: 'failed', error: 'QQ action queue is full' };
+            }
+            if (type === 'send-profile-like' &&
+                waiting.filter(action => action.type === type).length >= MAX_WAITING_PROFILE_LIKES) {
+                return { status: 'failed', error: 'QQ profile like queue is full' };
+            }
             return new Promise(resolve => {
-                const timer = setTimeout(() => settle(id, {
-                    status: 'unknown', error: 'QQ did not confirm the action',
-                }), 35000);
-                pending.set(id, { type, timer, resolve });
-                child.stdin.write(JSON.stringify({ type, id, selfId, params }) + '\n');
+                const action = { id: randomUUID(), type, params, resolve };
+                action.timer = setTimeout(() => {
+                    waiting.splice(waiting.indexOf(action), 1);
+                    resolve({ status: 'failed', error: 'QQ action expired while waiting in the queue' });
+                }, ACTION_QUEUE_TIMEOUT_MS);
+                waiting.push(action);
+                pumpActions();
             });
         },
         async close({ verify = false } = {}) {
-            stopping = true;
+            stopActions();
             if (selfId) onDetached?.(selfId, pid);
             stopTimers();
             child.stdin.end();

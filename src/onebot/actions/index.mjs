@@ -10,7 +10,8 @@ import { createGroupFileFolder, getGroupFileUrl, getGroupRootFiles, uploadGroupF
 import { getQunAlbumList, uploadImageToQunAlbum } from './group-albums.mjs';
 import { getFriendList, getStrangerInfo } from './friend.mjs';
 import { deleteMsg, getMsg, sendGroupMsg, sendMsg, sendPrivateMsg } from './message.mjs';
-import { friendPoke, getEmojiLikes, groupPoke, recallPoke, sendLike, sendPoke, setMsgEmojiLike } from './interactions.mjs';
+import { friendPoke, getEmojiLikes, getProfileLike, groupPoke, recallPoke, sendLike, sendPoke,
+    setMsgEmojiLike } from './interactions.mjs';
 import { getFriendMsgHistory, getGroupMsgHistory } from './history.mjs';
 import { getForwardMsg, sendForwardMsg, sendGroupForwardMsg, sendPrivateForwardMsg } from './forward.mjs';
 import { getFile, getImage, getPrivateFileUrl, getRecord } from './media.mjs';
@@ -76,6 +77,7 @@ const actions = {
     send_poke: sendPoke,
     recall_poke: recallPoke,
     send_like: sendLike,
+    get_profile_like: getProfileLike,
     set_msg_emoji_like: setMsgEmojiLike,
     get_emoji_likes: getEmojiLikes,
     get_login_info: getLoginInfo,

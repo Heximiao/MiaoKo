@@ -23,6 +23,7 @@ HTTP API 和正向 WebSocket 配置令牌后使用 `Authorization: Bearer <令�
 
 - `send_group_msg`、`send_private_msg` 用于收发联调。使用事件或发送结果中的 `message_id` 查询、引用或撤回消息。
 - `get_group_msg_history`、`get_friend_msg_history` 查询历史，`get_forward_msg` 展开合并转发。
+- `get_profile_like` 查询 QQ 名片点赞。默认查询当前账号，可选 `user_id`、`start`、`count`。结果中的 `favoriteInfo.userInfos` 提供点赞人的 `nick` 和 `count`。
 - 使用 `get_group_list`、`get_group_member_list` 和 `get_friend_list` 查询会话对象。完整动作名称见 [动作表](../src/onebot/actions/index.mjs)。
 
 发送视频需在系统 `PATH` 中提供 `ffmpeg` 和 `ffprobe`。群文件可使用群号和文件 ID 调用 `get_group_file_url` 获取下载地址。

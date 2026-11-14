@@ -24,7 +24,7 @@ action_types = {
     "get-group-member", "get-group-member-list", "get-user-profile",
     "get-group-list", "get-group-info", "get-friend-list",
     "send-poke", "recall-poke", "set-emoji-like", "get-emoji-likes", "resolve-reaction",
-    "get-message-history", "send-profile-like",
+    "get-message-history", "send-profile-like", "get-profile-like",
     "get-forward-message", "send-forward-message",
     "get-group-root-files", "get-group-file-url", "create-group-file-folder",
     "get-group-album-list", "upload-group-album",

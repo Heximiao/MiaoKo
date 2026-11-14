@@ -2,20 +2,25 @@ import WebSocket from 'ws';
 
 export const HEARTBEAT_MS = 15000;
 
-export function sendOneBotPacket(socket, packet) {
+export function sendOneBotPacket(socket, packet, onFailure) {
     if (socket?.readyState !== WebSocket.OPEN) return;
     if (socket.bufferedAmount > 256 * 1024) {
+        onFailure?.('发送缓冲区超过 256 KiB');
         socket.terminate();
         return;
     }
-    socket.send(JSON.stringify(packet), error => { if (error) socket.terminate(); });
+    socket.send(JSON.stringify(packet), error => {
+        if (!error) return;
+        onFailure?.(error.code ? `写入失败（${error.code}）` : '写入失败');
+        socket.terminate();
+    });
 }
 
-export function sendWsEvent(socket, event, { format, reportSelf }) {
+export function sendWsEvent(socket, event, { format, reportSelf, onFailure }) {
     if (event.post_type === 'message_sent' && !reportSelf) return;
     const packet = format === 'string' && Array.isArray(event.message)
         ? { ...event, message: event.raw_message } : event;
-    sendOneBotPacket(socket, packet);
+    sendOneBotPacket(socket, packet, onFailure);
 }
 
 export function metaEvent(account, type) {
