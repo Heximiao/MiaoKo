@@ -1,0 +1,23 @@
+{
+  "build": "9.9.37-54395",
+  "architecture": "x64",
+  "module": "wrapper.node",
+  "sha256": "fed532ad58d2404dcedf2858554e8fa52a5f4e65b271c008d2faca4011d7d4a2",
+  "actions": {
+    "sendGroupText": {
+      "module": "miaoko-group-text.dll",
+      "messageAttributes": "vas-msg-info-v1"
+    }
+  },
+  "duplexModule": "miaoko-duplex-v33.dll",
+  "receive": {
+    "status": "unverified",
+    "candidate": "NodeIKernelMsgListener::onRecvMsg",
+    "groupTextObserved": true,
+    "probe": {
+      "callbackObserved": true,
+      "callRva": "024919cb",
+      "instruction": "ff15977e6702"
+    }
+  }
+}

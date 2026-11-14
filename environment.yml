@@ -1,0 +1,6 @@
+name: miaoko
+channels:
+  - defaults
+dependencies:
+  - nodejs=20.17.0
+  - python=3.12

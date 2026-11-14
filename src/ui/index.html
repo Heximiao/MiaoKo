@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef5fa">
+  <title>MiaoKo · 控制台</title>
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <canvas id="overview-particles" aria-hidden="true" hidden></canvas>
+  <main id="login-view" class="login-view" aria-labelledby="login-title" hidden>
+    <section class="login-card">
+      <div class="login-brand"><img class="brand-logo" src="/logo.png" alt="" width="40" height="40"><strong>MiaoKo</strong></div>
+      <h1 id="login-title">登录控制台</h1>
+      <p id="login-description" class="hint"></p>
+      <form id="verify-form" class="login-form" hidden>
+        <label class="field">一次性初始化码
+          <input name="setupCode" autocomplete="off" spellcheck="false" maxlength="64" required>
+        </label>
+        <button class="primary" type="submit">验证并继续</button>
+      </form>
+      <form id="setup-form" class="login-form" hidden>
+        <label class="field">管理员用户名
+          <input name="username" autocomplete="username" spellcheck="false" maxlength="64" required>
+        </label>
+        <div class="field">
+          <label for="setup-password">管理密码</label>
+          <div class="password-row">
+            <input id="setup-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required>
+            <button type="button" data-password-toggle aria-controls="setup-password" aria-pressed="false">显示</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="setup-confirm-password">确认管理密码</label>
+          <div class="password-row">
+            <input id="setup-confirm-password" name="confirmPassword" type="password" autocomplete="new-password"
+              aria-describedby="setup-password-match" minlength="8" maxlength="256" required>
+            <button type="button" data-password-toggle aria-controls="setup-confirm-password" aria-pressed="false">显示</button>
+          </div>
+          <p id="setup-password-match" class="password-match" role="status"></p>
+        </div>
+        <button class="primary" type="submit">设置密码并登录</button>
+      </form>
+      <form id="login-form" class="login-form" hidden>
+        <label class="field">用户名
+          <input name="username" autocomplete="username" spellcheck="false" maxlength="64" required>
+        </label>
+        <div class="field">
+          <label for="login-password">管理密码</label>
+          <div class="password-row">
+            <input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="256" required>
+            <button type="button" data-password-toggle aria-controls="login-password" aria-pressed="false">显示</button>
+          </div>
+        </div>
+        <button class="primary" type="submit">登录</button>
+      </form>
+      <p id="login-error" class="form-feedback login-feedback" role="alert" hidden></p>
+      <footer class="login-footer"><button id="forgot-password" type="button" class="login-help">忘记密码？</button></footer>
+    </section>
+    <dialog id="password-help" class="endpoint-dialog password-help" aria-labelledby="password-help-title">
+      <form method="dialog">
+        <header class="card-heading"><h2 id="password-help-title">重置管理密码</h2></header>
+        <div class="password-help-body">
+          <ol>
+            <li>在运行 MiaoKo 的机器上，按 <kbd>Ctrl+C</kbd> 停止 MiaoKo。</li>
+            <li>在项目目录的 PowerShell 中运行下面的命令。如果你平时带有其他启动参数，这次也一并带上。</li>
+          </ol>
+          <pre><code>.\.conda\node.exe .\bin\dashboard.mjs --reset-password</code></pre>
+          <ol start="3">
+            <li>打开终端显示的 WebUI 地址，验证新的一次性初始化码，然后设置用户名并输入两遍新密码。</li>
+          </ol>
+        </div>
+        <footer class="endpoint-dialog-footer"><button class="primary" type="submit" autofocus>关闭</button></footer>
+      </form>
+    </dialog>
+  </main>
+  <div id="dashboard" class="layout" hidden>
+    <aside class="rail">
+      <a class="brand" href="#overview" aria-label="MiaoKo 总览">
+        <img class="brand-logo" src="/logo.png" alt="" width="40" height="40">
+        <span><strong>MiaoKo</strong><small>QQ 控制台</small></span>
+      </a>
+      <nav class="section-nav" aria-label="控制台">
+        <a id="show-overview" href="#overview" aria-current="page"><i class="icon icon-grid" aria-hidden="true"></i>总览</a>
+        <a id="show-instances" href="#instances"><i class="icon icon-window" aria-hidden="true"></i>QQ 实例</a>
+        <a id="show-onebot" href="#onebot"><i class="icon icon-sliders" aria-hidden="true"></i>OneBot 配置</a>
+        <a id="show-settings" href="#settings"><i class="icon icon-sliders" aria-hidden="true"></i>通用设置</a>
+        <a id="show-logs" href="#logs"><i class="icon icon-terminal" aria-hidden="true"></i>日志</a>
+      </nav>
+    </aside>
+    <main>
+      <header class="topbar">
+        <span id="page-label">总览</span>
+        <div class="topbar-actions">
+          <span id="service-status" class="status-pill" data-state="pending" role="status">正在连接</span>
+          <button id="logout" type="button">退出登录</button>
+        </div>
+      </header>
+      <div class="workspace">
+        <section id="overview-view" aria-labelledby="overview-title">
+          <header class="page-heading">
+            <div><h1 id="overview-title">运行总览</h1></div>
+          </header>
+          <div class="overview-stack">
+            <section class="card overview-section" aria-labelledby="overview-alerts-title">
+              <header class="overview-heading">
+                <div><h2 id="overview-alerts-title">最近告警</h2><p class="hint">最近 5 条 WARN / ERROR</p></div>
+                <a class="text-link" href="#logs">查看日志 <span aria-hidden="true">→</span></a>
+              </header>
+              <ul id="overview-alerts" class="overview-alerts"><li class="hint">正在读取日志…</li></ul>
+            </section>
+            <section class="card overview-section" aria-labelledby="overview-host-title">
+              <header class="overview-heading">
+                <div><h2 id="overview-host-title">主机资源</h2><p id="overview-host-info" class="hint" role="status">正在读取资源…</p></div>
+                <button id="overview-host-refresh" type="button">刷新</button>
+              </header>
+              <div class="overview-resources">
+                <article class="overview-resource">
+                  <div><h3>CPU 使用率</h3><strong id="overview-cpu-value">—</strong></div>
+                  <progress id="overview-cpu" max="100" aria-label="CPU 使用率"></progress>
+                </article>
+                <article class="overview-resource">
+                  <div><h3>内存使用</h3><strong id="overview-memory-value">—</strong></div>
+                  <progress id="overview-memory" max="100" aria-label="内存使用率"></progress>
+                  <p id="overview-memory-detail" class="hint"></p>
+                </article>
+                <article class="overview-resource">
+                  <div><h3>运行进程</h3><strong id="overview-pid">—</strong></div>
+                  <dl class="overview-process">
+                    <div><dt>RSS</dt><dd id="overview-rss">—</dd></div>
+                    <div><dt>堆内存</dt><dd id="overview-heap">—</dd></div>
+                    <div><dt>外部内存</dt><dd id="overview-external">—</dd></div>
+                  </dl>
+                </article>
+              </div>
+            </section>
+            <section class="card overview-section" aria-labelledby="overview-sessions-title">
+              <header class="overview-heading">
+                <div><h2 id="overview-sessions-title">在线会话</h2><p class="hint">当前正在监听的 QQ 账号</p></div>
+                <a class="text-link" href="#instances">管理实例 <span aria-hidden="true">→</span></a>
+              </header>
+              <div id="overview-sessions" class="overview-sessions"><p class="hint">正在读取会话…</p></div>
+            </section>
+          </div>
+        </section>
+        <section id="instances-view" aria-labelledby="instances-title" hidden>
+          <header class="page-heading">
+            <div><h1 id="instances-title">QQ 实例</h1><p class="hint">选择本机账号，查看收信状态和消息</p></div>
+            <button id="discover" type="button">刷新实例</button>
+          </header>
+          <p id="error" role="alert" hidden></p>
+          <div class="instances-grid">
+            <section class="card instance-list" aria-labelledby="accounts-title">
+              <div class="card-heading"><h2 id="accounts-title">本机账号</h2></div>
+              <nav id="processes" aria-label="选择 QQ 实例"></nav>
+            </section>
+            <section class="card feed" aria-label="收信记录">
+              <header class="card-heading feed-heading">
+                <div><h2 id="title">收信记录</h2><p id="status" class="hint" role="status"></p></div>
+                <div class="instance-actions">
+                  <button id="toggle" type="button" hidden></button>
+                  <button id="unload" class="danger" type="button" hidden>卸载</button>
+                </div>
+              </header>
+              <div id="messages" aria-label="收到的消息"></div>
+            </section>
+          </div>
+          <dialog id="unload-dialog" class="endpoint-dialog" aria-labelledby="unload-title" aria-describedby="unload-description">
+            <form method="dialog">
+              <header class="endpoint-dialog-heading">
+                <h2 id="unload-title">卸载监听</h2>
+              </header>
+              <div class="endpoint-dialog-body">
+                <p id="unload-description"></p>
+                <p class="hint">解除 MiaoKo 的收信挂钩，断开该实例的 OneBot 会话。QQ 会继续运行，DLL 随 QQ 退出释放。</p>
+              </div>
+              <footer class="endpoint-dialog-footer">
+                <button value="cancel" autofocus>取消</button>
+                <button value="unload" class="danger">卸载</button>
+              </footer>
+            </form>
+          </dialog>
+        </section>
+        <section id="onebot-view" aria-labelledby="onebot-title" hidden>
+          <div class="endpoint-layout">
+            <aside class="card endpoint-accounts" aria-labelledby="endpoint-accounts-title">
+              <header class="card-heading"><h2 id="endpoint-accounts-title">监听账号</h2></header>
+              <div id="onebot-accounts"></div>
+            </aside>
+            <div class="endpoint-main">
+              <header class="endpoint-heading">
+                <div class="heading-copy"><h1 id="onebot-title">OneBot 协议端点</h1><p class="hint">所有监听账号共用此配置</p></div>
+                <div class="endpoint-heading-actions">
+                  <button id="onebot-create" type="button" hidden>新建端点</button>
+                </div>
+              </header>
+              <div id="onebot-tabs" class="endpoint-tabs" role="tablist" aria-label="OneBot 配置类型">
+                <button id="tab-general" type="button" role="tab" aria-selected="true" aria-controls="panel-general">状态指令</button>
+                <button id="tab-http" type="button" role="tab" aria-selected="false" aria-controls="panel-endpoint" tabindex="-1">HTTP API <span data-count="http" class="endpoint-count"></span></button>
+                <button id="tab-http-post" type="button" role="tab" aria-selected="false" aria-controls="panel-endpoint" tabindex="-1">HTTP 客户端 <span data-count="http-post" class="endpoint-count"></span></button>
+                <button id="tab-forward" type="button" role="tab" aria-selected="false" aria-controls="panel-endpoint" tabindex="-1">WS 服务端 <span data-count="forward" class="endpoint-count"></span></button>
+                <button id="tab-reverse" type="button" role="tab" aria-selected="false" aria-controls="panel-endpoint" tabindex="-1">WS 客户端 <span data-count="reverse" class="endpoint-count"></span></button>
+              </div>
+              <section id="panel-general" role="tabpanel" aria-labelledby="tab-general">
+                <section class="card">
+                  <header class="card-heading"><h2>运行状态</h2><span id="onebot-status" class="status-pill">正在读取状态</span></header>
+
+                </section>
+                <form id="onebot-general-form" class="card settings onebot-general">
+                  <header class="card-heading"><h2>内置状态指令</h2></header>
+                  <div class="settings-fields">
+                    <label class="endpoint-enable">
+                      <span><strong>启用状态回复</strong><small class="hint">会话中发送纯文本触发词时，回复 MiaoKo 版本、平台和运行时长。监听账号自己也可触发。</small></span>
+                      <span class="endpoint-toggle"><input id="onebot-status-enabled" type="checkbox" role="switch"></span>
+                    </label>
+                    <div class="endpoint-form-grid">
+                      <label class="field">触发词
+                        <input id="onebot-status-trigger" type="text" value="#mk" maxlength="32" required>
+                      </label>
+                      <label class="field">回复冷却（秒）
+                        <input id="onebot-status-cooldown" type="number" value="5" min="0" max="3600" required>
+                      </label>
+                    </div>
+                    <label class="endpoint-enable">
+                      <span><strong>不转发给下游</strong><small class="hint">命中的指令仍显示在收信记录中。冷却按会话计算，0 表示不限。</small></span>
+                      <span class="endpoint-toggle"><input id="onebot-status-swallow" type="checkbox" role="switch"></span>
+                    </label>
+                  </div>
+                  <footer class="endpoint-dialog-footer">
+                    <button id="onebot-general-save" class="primary" type="submit" disabled>保存状态指令</button>
+                  </footer>
+                </form>
+              </section>
+              <section id="panel-endpoint" role="tabpanel" aria-labelledby="tab-http" hidden>
+                <p id="onebot-endpoint-description" class="hint endpoint-description"></p>
+                <div id="onebot-nodes" class="endpoint-node-list"></div>
+                <template id="onebot-node-template">
+                <article class="card endpoint-node">
+                  <div class="endpoint-node-info">
+                    <div class="endpoint-node-heading">
+                      <h2 data-node="node-title"></h2><span data-node="node-state" class="status-pill"></span>
+                    </div>
+                    <code data-node="node-address"></code>
+                    <p data-node="node-auth" class="hint"></p>
+                  </div>
+                  <div class="endpoint-node-actions">
+                    <label class="endpoint-toggle">
+                      <input data-node="node-enabled" type="checkbox" role="switch">启用
+                    </label>
+                    <button data-node="edit" type="button">编辑</button>
+                    <button data-node="delete" class="danger" type="button">删除</button>
+                  </div>
+                </article>
+                </template>
+                <p id="onebot-node-empty" class="card empty endpoint-empty" hidden>暂无端点</p>
+              </section>
+              <p id="onebot-result" class="endpoint-result" role="status"></p>
+            </div>
+          </div>
+          <dialog id="onebot-editor" class="endpoint-dialog" aria-labelledby="onebot-editor-title">
+            <form id="onebot-editor-form" class="settings">
+              <header class="endpoint-dialog-heading">
+                <div><h2 id="onebot-editor-title"></h2><p id="onebot-editor-description" class="hint"></p></div>
+                <button id="onebot-editor-close" class="endpoint-close" type="button" aria-label="关闭">×</button>
+              </header>
+              <div class="endpoint-dialog-body">
+                <label class="endpoint-enable">
+                  <span><strong>启用端点</strong><small>停用时保留已保存的配置。</small></span>
+                  <span class="endpoint-toggle"><input id="onebot-editor-enabled" type="checkbox" role="switch"></span>
+                </label>
+                <fieldset class="endpoint-fields">
+                  <legend>连接</legend>
+                  <label class="field">名称
+                    <input id="onebot-editor-name" type="text" maxlength="64">
+                  </label>
+                  <div class="endpoint-form-grid">
+                    <div id="onebot-editor-local" class="field" hidden>
+                      <span>本机地址</span><code id="onebot-editor-local-address" class="endpoint-address"></code>
+                    </div>
+                    <div id="onebot-editor-target" class="field" hidden>
+                      <label for="onebot-editor-url">目标地址</label>
+                      <input id="onebot-editor-url" type="url" maxlength="2048" spellcheck="false">
+                    </div>
+                    <label id="onebot-editor-retry-field" class="field" hidden>重连间隔（ms）
+                      <input id="onebot-editor-retry" type="number" min="0" max="300000" step="1" required>
+                      <small class="hint">0 为自动退避，固定间隔至少 1000 ms。</small>
+                    </label>
+                  </div>
+                </fieldset>
+                <fieldset class="endpoint-fields">
+                  <legend>鉴权</legend>
+                  <div id="onebot-editor-token" class="field" hidden>
+                    <label for="onebot-token">访问令牌</label>
+                    <div class="endpoint-token-row">
+                      <input id="onebot-token" type="password" maxlength="2048" autocomplete="new-password" aria-describedby="onebot-token-state">
+                      <button id="onebot-token-generate" type="button">生成</button>
+                      <button id="onebot-token-copy" type="button" disabled>复制</button>
+                      <button id="onebot-token-reveal" type="button" aria-pressed="false">显示</button>
+                    </div>
+                    <p id="onebot-token-state" class="hint"></p>
+                    <label id="onebot-clear-label" class="checkbox" hidden>
+                      <input id="onebot-clear-token" type="checkbox"> 清除此端点的令牌
+                    </label>
+                  </div>
+                  <div id="onebot-editor-signature" class="field" hidden>
+                    <label for="onebot-http-post-secret">签名密钥</label>
+                    <input id="onebot-http-post-secret" type="password" maxlength="2048" autocomplete="new-password" aria-describedby="onebot-http-post-secret-state">
+                    <p id="onebot-http-post-secret-state" class="hint"></p>
+                    <label id="onebot-clear-http-post-label" class="checkbox" hidden>
+                      <input id="onebot-clear-http-post-secret" type="checkbox"> 清除已保存的签名密钥
+                    </label>
+                  </div>
+                </fieldset>
+                <fieldset id="onebot-editor-behavior" class="endpoint-fields" hidden>
+                  <legend>行为</legend>
+                  <div class="endpoint-form-grid">
+                    <label class="field">消息格式
+                      <select id="onebot-editor-format"><option value="array">消息段数组</option><option value="string">CQ 码字符串</option></select>
+                    </label>
+                    <label id="onebot-editor-role-field" class="field" hidden>角色
+                      <select id="onebot-editor-role"><option value="Universal">Universal · 收发合一</option><option value="Event">Event · 仅事件</option><option value="Api">Api · 仅动作</option></select>
+                    </label>
+                  </div>
+                  <label class="endpoint-enable">
+                    <span><strong>上报自身消息</strong><small class="hint">将自己发送的消息作为 message_sent 事件上报。</small></span>
+                    <span class="endpoint-toggle"><input id="onebot-editor-self" type="checkbox" role="switch"></span>
+                  </label>
+                </fieldset>
+                <p id="onebot-editor-result" class="endpoint-result" role="alert" hidden></p>
+              </div>
+              <footer class="endpoint-dialog-footer">
+                <button id="onebot-editor-cancel" type="button">取消</button>
+                <button id="onebot-editor-save" class="primary" type="submit">保存端点</button>
+              </footer>
+            </form>
+          </dialog>
+        </section>
+        <section id="settings-view" aria-labelledby="settings-title" class="general-settings" hidden>
+          <header class="page-heading"><h1 id="settings-title">通用设置</h1></header>
+          <form id="webui-settings-form" class="card settings">
+            <header class="card-heading"><h2>WebUI 访问与日志</h2></header>
+            <div class="settings-fields">
+              <div class="field">
+                <strong>当前访问地址</strong>
+                <div class="settings-address">
+                  <code id="webui-address"></code>
+                  <button id="webui-copy-address" type="button">复制地址</button>
+                </div>
+                <p class="hint">当前监听 <code id="webui-bind-status"></code></p>
+              </div>
+              <div class="endpoint-form-grid">
+                <label class="field">监听地址
+                  <input name="bindAddress" type="text" placeholder="0.0.0.0" maxlength="15" autocomplete="off" spellcheck="false" required>
+                </label>
+                <label class="field">监听端口
+                  <input name="port" type="number" min="1024" max="65535" required>
+                </label>
+              </div>
+              <p class="hint">0.0.0.0 监听所有 IPv4 接口，127.0.0.1 仅本机。也可输入本机网卡的 IPv4 地址。</p>
+              <p id="webui-restart" class="hint"></p>
+              <label class="field">终端日志级别
+                  <select name="logLevel">
+                    <option value="DEBUG">DEBUG</option>
+                    <option value="INFO">INFO</option>
+                    <option value="WARN">WARN</option>
+                    <option value="ERROR">ERROR</option>
+                  </select>
+              </label>
+            </div>
+            <footer class="settings-actions">
+              <p id="webui-feedback" class="form-feedback" role="status"></p>
+              <button class="primary" type="submit" disabled>保存设置</button>
+            </footer>
+          </form>
+          <form id="webui-password-form" class="card settings">
+            <header class="card-heading"><h2>管理密码</h2></header>
+            <div class="settings-fields">
+              <label class="field">当前密码
+                <input name="currentPassword" type="password" autocomplete="current-password" maxlength="256" required>
+              </label>
+              <div class="field">
+                <label for="webui-new-password">新密码</label>
+                <div class="password-row">
+                  <input id="webui-new-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required>
+                  <button type="button" data-password-toggle aria-controls="webui-new-password" aria-pressed="false">显示</button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="webui-confirm-password">确认新密码</label>
+                <div class="password-row">
+                  <input id="webui-confirm-password" name="confirmPassword" type="password" autocomplete="new-password"
+                    aria-describedby="webui-password-match" minlength="8" maxlength="256" required>
+                  <button type="button" data-password-toggle aria-controls="webui-confirm-password" aria-pressed="false">显示</button>
+                </div>
+                <p id="webui-password-match" class="password-match" role="status"></p>
+              </div>
+              <p class="hint">密码须为 8–256 个字符。修改后，需要在所有浏览器重新登录。</p>
+            </div>
+            <footer class="settings-actions">
+              <p id="webui-password-feedback" class="form-feedback" role="status"></p>
+              <button type="submit">修改密码</button>
+            </footer>
+          </form>
+        </section>
+        <section id="logs-view" aria-labelledby="logs-title" hidden>
+          <section class="card log-card">
+            <header class="log-header">
+              <div>
+                <div class="log-title"><h1 id="logs-title">运行日志</h1><span id="logs-status" class="status-pill" role="status">正在连接</span></div>
+                <p id="logs-count" class="hint">正在读取日志</p>
+              </div>
+              <div class="log-tools">
+                <label class="log-search">
+                  <i class="icon-search" aria-hidden="true"></i>
+                  <input id="logs-search" type="search" aria-label="搜索消息、模块或级别" placeholder="搜索消息 / 模块 / 级别">
+                </label>
+                <div class="log-buttons" aria-label="日志显示和操作">
+                  <button id="logs-follow" type="button" aria-pressed="true">自动滚动</button>
+                  <button id="logs-wrap" type="button" aria-pressed="true">换行</button>
+                  <button id="logs-export" type="button" disabled>导出</button>
+                  <button id="logs-clear" type="button" disabled>清空日志</button>
+                </div>
+              </div>
+            </header>
+            <div id="logs-levels" class="log-levels" role="group" aria-label="按级别筛选">
+              <button type="button" data-level="TRACE" aria-pressed="true">TRACE</button>
+              <button type="button" data-level="DEBUG" aria-pressed="true">DEBUG</button>
+              <button type="button" data-level="INFO" aria-pressed="true">INFO</button>
+              <button type="button" data-level="SUCCESS" aria-pressed="true">SUCCESS</button>
+              <button type="button" data-level="WARN" aria-pressed="true">WARN</button>
+              <button type="button" data-level="ERROR" aria-pressed="true">ERROR</button>
+            </div>
+            <p id="logs-error" class="log-error" role="alert" hidden></p>
+            <div id="logs-scroll" class="log-scroll" tabindex="0" aria-label="实时日志表格">
+              <table class="log-table">
+                <thead><tr><th scope="col">时间</th><th scope="col">级别</th><th scope="col">模块</th><th scope="col">消息</th></tr></thead>
+                <tbody id="logs-rows"></tbody>
+              </table>
+              <p id="logs-empty" class="empty log-empty">暂无日志</p>
+            </div>
+          </section>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
