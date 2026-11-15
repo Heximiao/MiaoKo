@@ -11,5 +11,6 @@ export async function getFriendList(_params, account, { request }) {
 export async function getStrangerInfo(params, account, { request }) {
     const user = qqId(params.user_id, 'user_id');
     const { profile } = await queryProfile(request, account, 'get-user-profile', params, { user });
-    return userInfo(profile, user);
+    return { ...userInfo(profile, user),
+        avatar_url: `https://q4.qlogo.cn/headimg_dl?dst_uin=${user}&spec=100` };
 }

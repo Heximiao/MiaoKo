@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { MAX_ACTION_BYTES } from './actions/message-params.mjs';
 import { HEARTBEAT_MS, metaEvent, respondToWsAction, sendOneBotPacket, sendWsEvent } from './ws-packets.mjs';
 
-export function createReverseWs({ dispatch, onState }) {
+export function createReverseWs({ dispatch, onState, formatEvent }) {
     const peers = new Map();
     let endpoint = {};
 
@@ -98,7 +98,8 @@ export function createReverseWs({ dispatch, onState }) {
         publish(account, event) {
             const peer = peers.get(account);
             if (endpoint.reverseWsRole !== 'Api') {
-                sendWsEvent(peer?.socket, event, { format: endpoint.reverseWsFormat,
+                sendWsEvent(peer?.socket, formatEvent ? formatEvent(event, endpoint.reverseWsUrl) : event,
+                    { format: endpoint.reverseWsFormat,
                     reportSelf: endpoint.reverseWsReportSelf, onFailure: peer?.recordFailure });
             }
         },

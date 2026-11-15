@@ -1,7 +1,7 @@
 import { setupParticles } from './particles.mjs';
 import { createQqAvatar } from './qq-avatar.mjs';
 import { setupOneBotSettings } from '/onebot-settings.mjs';
-import { setupOneBotLogs } from '/onebot-logs.mjs';
+import { createOverviewAlertState, setupOneBotLogs } from '/onebot-logs.mjs';
 import { enterWebUI, setupGeneralSettings, jsonPost } from '/webui.mjs';
 
 const ui = Object.fromEntries(
@@ -36,7 +36,16 @@ let messageKey;
 let overviewSessionsKey;
 const oneBotSettings = setupOneBotSettings(api);
 const showParticles = setupParticles(document.getElementById('overview-particles'));
-const showOneBotLogs = setupOneBotLogs(renderOverviewAlerts);
+const alertState = createOverviewAlertState({
+    getItem: key => localStorage.getItem(key),
+    setItem: (key, value) => localStorage.setItem(key, value),
+});
+let alertEntries;
+let alertTimer;
+const showOneBotLogs = setupOneBotLogs(entries => {
+    alertEntries = entries;
+    renderOverviewAlerts();
+});
 const loadGeneralSettings = setupGeneralSettings(api);
 let signedIn = false;
 
@@ -228,9 +237,13 @@ function navigate() {
     refreshOneBot();
 }
 
-function renderOverviewAlerts(entries) {
-    const alerts = entries.filter(entry => entry.level === 'WARN' || entry.level === 'ERROR').slice(-5).reverse();
-    const rows = alerts.map(entry => {
+function renderOverviewAlerts() {
+    clearTimeout(alertTimer);
+    const { rows: alerts, nextExpiry } = alertState.visible(alertEntries);
+    if (Number.isFinite(nextExpiry)) {
+        alertTimer = setTimeout(renderOverviewAlerts, Math.max(0, nextExpiry - Date.now()));
+    }
+    const rows = alerts.map(({ entry, read }) => {
         const row = document.createElement('li');
         row.dataset.level = entry.level;
         const time = document.createElement('time');
@@ -241,7 +254,16 @@ function renderOverviewAlerts(entries) {
         level.textContent = entry.level;
         const message = document.createElement('span');
         message.textContent = '[' + entry.module + '] ' + entry.message;
-        row.append(time, level, message);
+        const mark = document.createElement('button');
+        mark.type = 'button';
+        mark.className = 'overview-alert-read';
+        mark.textContent = read ? '已读' : '标为已读';
+        mark.disabled = read;
+        mark.addEventListener('click', () => {
+            alertState.markRead(entry);
+            renderOverviewAlerts();
+        });
+        row.append(time, level, message, mark);
         return row;
     });
     if (!rows.length) {

@@ -15,7 +15,7 @@ import { createOneBotConfig, getEndpoints, serverEndpointPath, generalDefaults, 
 import { createActions } from '../onebot/actions/index.mjs';
 import { createReplyRecords } from '../onebot/reply-records.mjs';
 import { openMessageIds } from '../onebot/message-ids.mjs';
-import { toOneBotRecord } from '../onebot/message.mjs';
+import { toOneBotRecord, withWavRecordUrls } from '../onebot/message.mjs';
 import { toOneBotNotice, toOneBotRequest } from '../onebot/notice.mjs';
 import { createOutgoingClients } from '../onebot/outgoing.mjs';
 import { createReverseWs } from '../onebot/reverse-ws.mjs';
@@ -104,7 +104,8 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
 
     const inbox = createInbox();
     const retryWarnings = new Set();
-    const logs = createOneBotLogs(({ level, module, message }) => {
+    const logs = createOneBotLogs(({ level, module, message, detailsOnly }) => {
+        if (detailsOnly) return;
         if (['Event', 'Notice', 'Action', 'HTTP'].includes(module) && level === 'SUCCESS') return;
         if (logLevels.indexOf(level === 'SUCCESS' ? 'INFO' : level) <
             logLevels.indexOf(webui.get().logLevel ?? 'INFO')) return;
@@ -246,13 +247,21 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
             const owner = /^[1-9]\d{4,11}$/.test(identity) ? ` · QQ ${identity}` : '';
             const error = result.retcode !== 0 && result.message ? ` · ${result.message.slice(0, 240)}` : '';
             logs.add(result.retcode === 0 ? 'SUCCESS' : 'WARN', 'Action',
-                `${transport}${owner} · ${action} · retcode ${result.retcode} · ${Math.round(performance.now() - started)} ms${error}`);
+                `${transport}${owner} · ${action} · retcode ${result.retcode} · ${Math.round(performance.now() - started)} ms${error}`,
+                { detailsOnly: action === 'send_like' && result.retcode !== 0 });
             return result;
         }, { supports: dispatch.supports });
     }
     const httpDispatch = loggedDispatch('HTTP');
     const reverse = createOutgoingClients(id => createReverseWs({
         dispatch: loggedDispatch('反向 WS'),
+        formatEvent(event, endpointUrl) {
+            if (mediaUrl) return withWavRecordUrls(event, baseUrl);
+            if (!endpointUrl || !['0.0.0.0', '127.0.0.1'].includes(bindAddress)) return event;
+            const { hostname } = new URL(endpointUrl);
+            return ['localhost', '127.0.0.1', '[::1]'].includes(hostname)
+                ? withWavRecordUrls(event, baseUrl) : event;
+        },
         onState(account, state, detail) {
             const labels = { connecting: '正在连接反向 WebSocket', connected: '反向 WebSocket 已连接',
                 retrying: '反向 WebSocket 已断开，等待重连', invalid: '收到无效的 OneBot JSON 请求' };
@@ -550,8 +559,8 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
                 return;
             }
             // Explicitly published OneBot media URLs are capabilities used by clients without a WebUI session.
-            if (mediaUrl && mediaPort === undefined && localOneBot(request) &&
-                await serveMedia(request, response, images, mediaPrefix)) return;
+            if (mediaPort === undefined && localOneBot(request) &&
+                await serveMedia(request, response, images, mediaPrefix, !mediaUrl)) return;
             if (!session) {
                 json(response, 401, { error: '请先登录管理面板' });
                 return;

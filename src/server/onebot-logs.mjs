@@ -21,9 +21,10 @@ export function createOneBotLogs(onEntry) {
     }
 
     return {
-        add(level, module, message) {
+        add(level, module, message, { detailsOnly = false } = {}) {
             const entry = { id: ++sequence, time: Date.now(), level, module,
-                message: message.replace(/[\r\n\t]+/g, ' ').slice(0, 800) };
+                message: message.replace(/[\r\n\t]+/g, ' ').slice(0, 800),
+                ...(detailsOnly && { detailsOnly }) };
             entries.push(entry);
             if (entries.length > LIMIT) entries.shift();
             broadcast('entry', entry);

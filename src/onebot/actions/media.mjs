@@ -22,7 +22,7 @@ function lookup(params, account, images, types, peer) {
     return media;
 }
 
-async function convertVoice(bytes, format) {
+export async function convertVoice(bytes, format) {
     const directory = await mkdtemp(join(tmpdir(), 'miaoko-record-'));
     try {
         const input = join(directory, 'input');
@@ -30,14 +30,14 @@ async function convertVoice(bytes, format) {
         if (silk) silkDuration(bytes, 15000);
         const pcm = silk ? (await decode(bytes, 24000)).data : bytes;
         await writeFile(input, pcm);
-        const output = format === 'm4a' ? join(directory, 'output.m4a') : 'pipe:1';
+        const output = ['m4a', 'wav'].includes(format) ? join(directory, 'output.' + format) : 'pipe:1';
         const codec = format === 'spx' ? ['-c:a', 'libspeex'] : format === 'amr'
             ? ['-ar', '8000', '-ac', '1', '-c:a', 'libopencore_amrnb'] : [];
         const { stdout } = await exec(ffmpeg, ['-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
             ...(silk ? ['-f', 's16le', '-ar', '24000', '-ac', '1'] : ['-format_whitelist', 'amr']),
             '-i', input, '-t', '300', ...codec, '-f', formats.get(format), output],
         { encoding: 'buffer', maxBuffer: 24 * 1024 * 1024, timeout: 20000, windowsHide: true });
-        return format === 'm4a' ? await readFile(output) : stdout;
+        return output === 'pipe:1' ? stdout : await readFile(output);
     } finally {
         await rm(directory, { recursive: true, force: true });
     }

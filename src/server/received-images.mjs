@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { imageFormat } from '../qq/actions/messages/image-files.mjs';
+import { convertVoice } from '../onebot/actions/media.mjs';
 
 export function mediaBaseUrl(value) {
     const url = new URL(value);
@@ -11,12 +12,13 @@ export function mediaBaseUrl(value) {
     return url.href.replace(/\/+$/, '');
 }
 
-export async function serveMedia(request, response, images, prefix = '') {
+export async function serveMedia(request, response, images, prefix = '', voiceOnly = false) {
     if (!request.url.startsWith(prefix)) return false;
-    const token = ['GET', 'HEAD'].includes(request.method) &&
-        /^\/media\/([0-9a-f-]{36})$/.exec(request.url.slice(prefix.length))?.[1];
-    if (!token) return false;
-    const media = await images.get(token);
+    const match = ['GET', 'HEAD'].includes(request.method) &&
+        /^\/media\/([0-9a-f-]{36})(\.wav)?$/.exec(request.url.slice(prefix.length));
+    if (!match || (voiceOnly && !match[2])) return false;
+    const [, token, wav] = match;
+    const media = wav ? await images.wave(token) : await images.get(token);
     if (!media) {
         response.writeHead(404).end();
         return true;
@@ -37,6 +39,7 @@ export function createReceivedImages({ root, baseUrl, request }) {
     const images = new Map();
     const locations = new Map();
     const urlFor = token => baseUrl && baseUrl + '/media/' + token;
+    let activeConversions = 0;
     function remove(token) {
         const media = images.get(token);
         if (media) locations.delete(media.key);
@@ -119,6 +122,20 @@ export function createReceivedImages({ root, baseUrl, request }) {
             }
             image.pending ??= read(image).finally(() => { image.pending = undefined; });
             return image.pending;
+        },
+        wave(token) {
+            const media = images.get(token);
+            if (media?.mediaType !== 'record' || Date.now() >= media.expires) return;
+            if (media.wave) return media.wave;
+            if (activeConversions >= 4) return;
+            activeConversions++;
+            media.wave = Promise.resolve(this.get(token)).then(async original => {
+                if (original) return { bytes: await convertVoice(original.bytes, 'wav'), type: 'audio/wav' };
+            }).catch(() => undefined).finally(() => {
+                activeConversions--;
+                media.wave = undefined;
+            });
+            return media.wave;
         },
     };
 }

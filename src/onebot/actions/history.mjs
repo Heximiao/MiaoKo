@@ -3,25 +3,37 @@ import { ActionError, booleanParam, qqId } from './shared.mjs';
 async function history(kind, params, account, { ids, request, formatRecord }) {
     const field = kind === 'group' ? 'group_id' : 'user_id';
     const peer = qqId(params[field], field);
-    const { message_seq: rawCursor = '0', count: rawCount = 20 } = params;
+    const { message_id: rawMessageId, message_seq: rawCursor = '0', count: rawCount = 20 } = params;
     const cursor = String(rawCursor) || '0';
     const count = String(rawCount);
-    if ((typeof rawCursor !== 'string' && !Number.isSafeInteger(rawCursor)) ||
-        (typeof rawCount !== 'string' && !Number.isSafeInteger(rawCount)) ||
-        !/^(?:0|[1-9]\d{0,23})$/.test(cursor) || !/^[1-9]\d{0,2}$/.test(count) || Number(count) > 100) {
-        throw new ActionError(1400, 'Invalid message_seq or count (1–100)');
+    if ((typeof rawCount !== 'string' && typeof rawCount !== 'number') ||
+        !/^\d+$/.test(count) || !Number.isSafeInteger(Number(count))) {
+        throw new ActionError(1400, 'count must be a non-negative integer');
     }
-    const reverse = booleanParam(params.reverse_order ?? params.reverseOrder ?? false, 'reverse_order');
+    const limit = Math.min(Number(count) || 20, 100);
+    const useMessageId = cursor === '0' && rawMessageId !== undefined;
+    const anchor = useMessageId ? String(rawMessageId) : cursor;
+    if (useMessageId) {
+        if (!/^-?(?:0|[1-9]\d{0,9})$/.test(anchor) ||
+            Number(anchor) < -0x80000000 || Number(anchor) > 0x7fffffff) {
+            throw new ActionError(1400, 'Invalid message_id');
+        }
+    } else if ((typeof rawCursor !== 'string' && !Number.isSafeInteger(rawCursor)) ||
+        !/^(?:0|[1-9]\d{0,23})$/.test(cursor)) {
+        throw new ActionError(1400, 'Invalid message_seq');
+    }
+    const reverse = booleanParam(params.reverse_order ?? params.reverseOrder ?? useMessageId, 'reverse_order');
     const disableUrl = booleanParam(params.disable_get_url ?? false, 'disable_get_url');
-    const saved = cursor !== '0' && Number(cursor) <= 0x7fffffff ? ids.resolve(account, Number(cursor)) : undefined;
+    const saved = Number(anchor) !== 0 && Number(anchor) <= 0x7fffffff
+        ? ids.resolve(account, Number(anchor)) : undefined;
     const reference = { kind, peer };
     if (saved && saved.kind === kind && saved.peer === peer && !saved.parentId) {
         reference.nativeId = saved.nativeId;
-    } else if (cursor !== '0') {
-        if (saved) throw new ActionError(1404, 'History cursor does not belong to this conversation');
+    } else if (Number(anchor) !== 0) {
+        if (saved || useMessageId) throw new ActionError(1404, 'History cursor does not belong to this conversation');
         reference.seq = cursor;
     }
-    const result = await request(account, 'get-message-history', { reference, count: Number(count), reverse });
+    const result = await request(account, 'get-message-history', { reference, count: limit, reverse });
     if (result.status !== 'ok') {
         throw new ActionError(result.status === 'unknown' ? 1501 : 1500, result.error ?? 'QQ history query failed');
     }

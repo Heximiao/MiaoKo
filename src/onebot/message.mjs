@@ -43,6 +43,18 @@ function cqSegment(segment) {
     return `[CQ:${segment.type}${params.join('')}]`;
 }
 
+export function withWavRecordUrls(event, baseUrl) {
+    const isLocalRecord = ({ type, data }) => type === 'record' && /^[0-9a-f-]{36}$/.test(data.file_id);
+    if (!Array.isArray(event.message) || !event.message.some(isLocalRecord)) return event;
+    const message = event.message.map(segment => {
+        if (!isLocalRecord(segment)) return segment;
+        const { file_size, ...data } = segment.data;
+        const url = baseUrl + '/media/' + data.file_id + '.wav';
+        return { ...segment, data: { ...data, file: url, url } };
+    });
+    return { ...event, message, raw_message: message.map(cqSegment).join('') };
+}
+
 export async function toOneBotRecord(account, record, { ids, images, request, replyRecords }, location,
     { disableUrl = false } = {}) {
     const kind = record.chatType === 2 ? 'group' : 'private';

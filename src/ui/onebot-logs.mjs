@@ -1,5 +1,63 @@
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { timeStyle: 'medium', hourCycle: 'h23' });
 const FOLLOW_DISTANCE = 64;
+const ALERT_READ_KEY = 'miaoko.overview.alerts.read';
+const ALERT_RETENTION_MS = { WARN: 5 * 60_000, ERROR: 10 * 60_000 };
+const isOverviewAlert = entry => entry && !entry.detailsOnly && Object.hasOwn(ALERT_RETENTION_MS, entry.level);
+
+export function createOverviewAlertState(storage, now = Date.now) {
+    const keyFor = entry => `${entry.id}:${entry.time}`;
+    let read = new Map();
+    try {
+        read = new Map(JSON.parse(storage.getItem(ALERT_READ_KEY) ?? '[]'));
+    } catch {}
+    const readOnThisPage = new Set();
+
+    function save() {
+        try {
+            storage.setItem(ALERT_READ_KEY, JSON.stringify([...read]));
+        } catch {}
+    }
+
+    return {
+        markRead(entry) {
+            const key = keyFor(entry);
+            if (read.has(key)) return;
+            read.set(key, now());
+            readOnThisPage.add(key);
+            save();
+        },
+        visible(entries) {
+            const alerts = entries.filter(isOverviewAlert);
+            const keys = new Set(alerts.map(keyFor));
+            let changed = false;
+            for (const key of read.keys()) {
+                if (keys.has(key)) continue;
+                read.delete(key);
+                readOnThisPage.delete(key);
+                changed = true;
+            }
+            if (changed) save();
+
+            const time = now();
+            const rows = [];
+            let nextExpiry = Infinity;
+            for (const entry of alerts.slice().reverse()) {
+                const key = keyFor(entry);
+                const readAt = read.get(key);
+                if (readAt === undefined) {
+                    rows.push({ entry, read: false });
+                } else {
+                    const expiry = readAt + ALERT_RETENTION_MS[entry.level];
+                    if (expiry <= time || (entry.level === 'ERROR' && !readOnThisPage.has(key))) continue;
+                    nextExpiry = Math.min(nextExpiry, expiry);
+                    rows.push({ entry, read: true });
+                }
+                if (rows.length === 5) break;
+            }
+            return { rows, nextExpiry };
+        },
+    };
+}
 
 export function setupOneBotLogs(onEntries) {
     const element = name => document.getElementById('logs-' + name);
@@ -138,8 +196,7 @@ export function setupOneBotLogs(onEntries) {
                 removed = entries.shift();
                 if (rows.firstElementChild?.dataset.id === String(removed.id)) rows.firstElementChild.remove();
             }
-            if (entry.level === 'WARN' || entry.level === 'ERROR' ||
-                removed?.level === 'WARN' || removed?.level === 'ERROR') onEntries(entries);
+            if (isOverviewAlert(entry) || isOverviewAlert(removed)) onEntries(entries);
             if (matches(entry)) rows.append(makeRow(entry));
             updateSummary();
             if (followLatest) scroll.scrollTop = scroll.scrollHeight;

@@ -61,6 +61,7 @@ const actions = {
     upload_image_to_qun_album: uploadImageToQunAlbum,
     get_friend_list: getFriendList,
     get_stranger_info: getStrangerInfo,
+    get_user_info: getStrangerInfo,
     send_group_msg: sendGroupMsg,
     send_private_msg: sendPrivateMsg,
     send_msg: sendMsg,
