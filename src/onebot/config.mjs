@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { isIPv4 } from 'node:net';
 
 export class OneBotConfigError extends Error {}
 
@@ -19,11 +20,12 @@ const endpointTokens = ['httpAccessToken', 'forwardWsAccessToken', 'reverseWsAcc
 const endpointTypes = {
     http: {
         list: 'httpEndpoints', configured: 'httpConfigured', enabled: 'httpEnabled', token: 'httpAccessToken',
-        fields: ['httpName', 'httpEnabled', 'httpAccessToken'],
+        fields: ['httpName', 'httpEnabled', 'httpAccessToken', 'httpPort', 'httpBind', 'httpPath'],
     },
     forward: {
         list: 'forwardWsEndpoints', configured: 'forwardWsConfigured', enabled: 'forwardWsEnabled', token: 'forwardWsAccessToken',
-        fields: ['forwardWsName', 'forwardWsEnabled', 'forwardWsAccessToken', 'forwardWsFormat', 'forwardWsReportSelf'],
+        fields: ['forwardWsName', 'forwardWsEnabled', 'forwardWsAccessToken', 'forwardWsFormat', 'forwardWsReportSelf',
+            'forwardWsPort', 'forwardWsBind', 'forwardWsPath'],
     },
     reverse: {
         list: 'reverseWsEndpoints', url: 'reverseWsUrl', enabled: 'reverseWsEnabled', token: 'reverseWsAccessToken',
@@ -90,7 +92,7 @@ export function createOneBotConfig(path) {
             await writes;
             return publicView(await read());
         },
-        save(input) {
+        save(input, prepare) {
             const mutation = input?.endpoint;
             let type;
             let endpointChange;
@@ -159,12 +161,17 @@ export function createOneBotConfig(path) {
                 }
                 await mkdir(dirname(path), { recursive: true });
                 const pending = path + '.' + randomUUID() + '.tmp';
+                const listenerChange = await prepare?.(next);
                 try {
                     await writeFile(pending, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
                     await rename(pending, path);
+                } catch (error) {
+                    await listenerChange?.rollback();
+                    throw error;
                 } finally {
                     await rm(pending, { force: true });
                 }
+                listenerChange?.commit();
                 return publicView(next);
             });
             writes = operation.catch(() => {});
@@ -186,6 +193,26 @@ function validate(input) {
         throw new OneBotConfigError('配置格式无效');
     }
     const change = { ...input };
+    for (const key of ['httpPort', 'forwardWsPort']) {
+        const value = input[key];
+        if (value !== undefined && (!Number.isInteger(value) || value < 1024 || value > 65535)) {
+            throw new OneBotConfigError('监听端口须为 1024–65535 的整数');
+        }
+    }
+    for (const key of ['httpBind', 'forwardWsBind']) {
+        if (input[key] !== undefined && !isIPv4(input[key])) {
+            throw new OneBotConfigError('监听地址须为 IPv4 地址');
+        }
+    }
+    for (const key of ['httpPath', 'forwardWsPath']) {
+        if (input[key] === undefined) continue;
+        const value = input[key];
+        if (typeof value !== 'string' || value.length > 256 ||
+            !/^\/(?:[\w-]+(?:\/[\w-]+)*\/?)?$/.test(value)) {
+            throw new OneBotConfigError('路径须以 / 开头，只能使用字母、数字、下划线、连字符和斜杠');
+        }
+        change[key] = value === '/' ? value : value.replace(/\/$/, '');
+    }
     for (const [key, fallback] of Object.entries(extras)) {
         if (input[key] !== undefined && typeof input[key] !== typeof fallback) {
             throw new OneBotConfigError('配置格式无效');

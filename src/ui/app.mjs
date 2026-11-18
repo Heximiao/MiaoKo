@@ -2,12 +2,13 @@ import { setupParticles } from './particles.mjs';
 import { createQqAvatar } from './qq-avatar.mjs';
 import { setupOneBotSettings } from '/onebot-settings.mjs';
 import { createOverviewAlertState, setupOneBotLogs } from '/onebot-logs.mjs';
-import { enterWebUI, setupGeneralSettings, jsonPost } from '/webui.mjs';
+import { enterWebUI, setupGeneralSettings, setupQuickPoke, setupStickerSummary, jsonPost } from '/webui.mjs';
 
 const ui = Object.fromEntries(
     ['discover', 'processes', 'title', 'status', 'toggle', 'unload', 'unload-dialog', 'unload-description', 'error', 'messages',
-        'show-overview', 'show-instances', 'show-onebot', 'show-settings', 'show-logs', 'overview-view', 'instances-view',
-        'onebot-view', 'settings-view', 'logs-view', 'page-label', 'service-status', 'onebot-status', 'overview-alerts',
+        'show-overview', 'show-instances', 'show-onebot', 'show-settings', 'show-quick-actions', 'show-logs',
+        'overview-view', 'instances-view', 'onebot-view', 'settings-view', 'quick-actions-view', 'logs-view',
+        'page-label', 'service-status', 'onebot-status', 'overview-alerts',
         'overview-sessions', 'overview-host-info', 'overview-host-refresh', 'overview-cpu', 'overview-cpu-value',
         'overview-memory', 'overview-memory-value', 'overview-memory-detail', 'overview-pid',
         'overview-rss', 'overview-heap', 'overview-external']
@@ -22,7 +23,8 @@ const states = {
     'account-changed': '账号已变化，请重新开始监听',
 };
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { timeStyle: 'medium' });
-const pages = { overview: '总览', instances: 'QQ 实例', onebot: 'OneBot 配置', settings: '通用设置', logs: '日志' };
+const pages = { overview: '总览', instances: 'QQ 实例', onebot: 'OneBot 配置', settings: '通用设置',
+    'quick-actions': '快捷触发', logs: '日志' };
 let discovered = [];
 let sessions = [];
 let page;
@@ -31,6 +33,7 @@ let selected;
 let operating = false;
 let refreshing = false;
 let refreshingOneBot = false;
+let refreshingHost = false;
 let sidebarKey;
 let messageKey;
 let overviewSessionsKey;
@@ -47,6 +50,10 @@ const showOneBotLogs = setupOneBotLogs(entries => {
     renderOverviewAlerts();
 });
 const loadGeneralSettings = setupGeneralSettings(api);
+const stickerSummary = setupStickerSummary(api);
+const quickPoke = setupQuickPoke(api, () => {
+    if (page === 'quick-actions') void stickerSummary.load();
+});
 let signedIn = false;
 
 async function api(path, options) {
@@ -180,10 +187,13 @@ async function refresh() {
     try {
         sessions = await api('/api/messages');
         showService(true);
+        quickPoke.showAccounts(sessions);
+        if (page === 'quick-actions') void stickerSummary.refreshRemaining();
         renderOverviewSessions();
         render();
     } catch {
         showService(false);
+        quickPoke.showAccounts([]);
         renderOverviewSessions(false);
         setText(ui.status, '本地接收服务未连接');
     } finally {
@@ -229,21 +239,24 @@ function navigate() {
     setText(ui['page-label'], pages[page]);
     showParticles(page === 'overview');
     showOneBotLogs(page === 'logs' || page === 'overview');
+    renderOverviewAlerts();
     if (page === 'overview') void refreshHost();
     if (page === 'onebot') oneBotSettings.load();
     else if (page === 'settings') void loadGeneralSettings();
-    else if (page !== 'logs') discover();
+    else if (page === 'quick-actions') void stickerSummary.load();
+    else if (page === 'overview' || page === 'instances') discover();
     refresh();
     refreshOneBot();
 }
 
 function renderOverviewAlerts() {
     clearTimeout(alertTimer);
-    const { rows: alerts, nextExpiry } = alertState.visible(alertEntries);
+    if (page !== 'overview' || document.hidden || !alertEntries) return;
+    const { rows: alerts, nextExpiry } = alertState.visible(alertEntries, { markVisibleRead: true });
     if (Number.isFinite(nextExpiry)) {
         alertTimer = setTimeout(renderOverviewAlerts, Math.max(0, nextExpiry - Date.now()));
     }
-    const rows = alerts.map(({ entry, read }) => {
+    const rows = alerts.map(({ entry }) => {
         const row = document.createElement('li');
         row.dataset.level = entry.level;
         const time = document.createElement('time');
@@ -254,16 +267,7 @@ function renderOverviewAlerts() {
         level.textContent = entry.level;
         const message = document.createElement('span');
         message.textContent = '[' + entry.module + '] ' + entry.message;
-        const mark = document.createElement('button');
-        mark.type = 'button';
-        mark.className = 'overview-alert-read';
-        mark.textContent = read ? '已读' : '标为已读';
-        mark.disabled = read;
-        mark.addEventListener('click', () => {
-            alertState.markRead(entry);
-            renderOverviewAlerts();
-        });
-        row.append(time, level, message, mark);
+        row.append(time, level, message);
         return row;
     });
     if (!rows.length) {
@@ -317,11 +321,14 @@ function showUsage(key, percent) {
     setText(ui['overview-' + key + '-value'], percent === null ? '—' : percent.toFixed(1) + '%');
 }
 
-async function refreshHost() {
+async function refreshHost(manual = false) {
+    if (page !== 'overview' || document.hidden || refreshingHost) return;
+    refreshingHost = true;
     const button = ui['overview-host-refresh'];
-    if (button.disabled) return;
-    button.disabled = true;
-    button.textContent = '刷新中…';
+    if (manual) {
+        button.disabled = true;
+        button.textContent = '刷新中…';
+    }
     try {
         const host = await api('/api/overview/resources');
         setText(ui['overview-host-info'], [host.cpuModel, host.cpuCount + ' 个逻辑核心', 'Node ' + host.node]
@@ -338,12 +345,15 @@ async function refreshHost() {
     } catch {
         setText(ui['overview-host-info'], '无法读取资源，请重试');
     } finally {
-        button.disabled = false;
-        button.textContent = '刷新';
+        refreshingHost = false;
+        if (manual) {
+            button.disabled = false;
+            button.textContent = '刷新';
+        }
     }
 }
 
-ui['overview-host-refresh'].onclick = refreshHost;
+ui['overview-host-refresh'].onclick = () => refreshHost(true);
 ui.discover.onclick = discover;
 async function operate(pid, action) {
     operating = true;
@@ -387,9 +397,14 @@ if (signedIn) {
         }
     };
     window.addEventListener('hashchange', navigate);
+    document.addEventListener('visibilitychange', () => {
+        renderOverviewAlerts();
+        void refreshHost();
+    });
     render();
     navigate();
     setInterval(() => { if (page === 'instances') refresh(); }, 250);
     setInterval(() => { if (page !== 'instances') refresh(); }, 2000);
     setInterval(refreshOneBot, 2000);
+    setInterval(refreshHost, 5000);
 }

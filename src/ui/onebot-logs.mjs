@@ -19,14 +19,7 @@ export function createOverviewAlertState(storage, now = Date.now) {
     }
 
     return {
-        markRead(entry) {
-            const key = keyFor(entry);
-            if (read.has(key)) return;
-            read.set(key, now());
-            readOnThisPage.add(key);
-            save();
-        },
-        visible(entries) {
+        visible(entries, { markVisibleRead = false } = {}) {
             const alerts = entries.filter(isOverviewAlert);
             const keys = new Set(alerts.map(keyFor));
             let changed = false;
@@ -36,14 +29,18 @@ export function createOverviewAlertState(storage, now = Date.now) {
                 readOnThisPage.delete(key);
                 changed = true;
             }
-            if (changed) save();
-
             const time = now();
             const rows = [];
             let nextExpiry = Infinity;
             for (const entry of alerts.slice().reverse()) {
                 const key = keyFor(entry);
-                const readAt = read.get(key);
+                let readAt = read.get(key);
+                if (readAt === undefined && markVisibleRead) {
+                    readAt = time;
+                    read.set(key, readAt);
+                    readOnThisPage.add(key);
+                    changed = true;
+                }
                 if (readAt === undefined) {
                     rows.push({ entry, read: false });
                 } else {
@@ -54,6 +51,7 @@ export function createOverviewAlertState(storage, now = Date.now) {
                 }
                 if (rows.length === 5) break;
             }
+            if (changed) save();
             return { rows, nextExpiry };
         },
     };

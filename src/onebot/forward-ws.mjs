@@ -10,25 +10,26 @@ export function createForwardWs({ host, accounts, dispatch, onState, basePath = 
     let enabled = false;
     let token = '';
     let behavior = {};
+    let addressKey;
 
     function reject(socket, status) {
         socket.end(`HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     }
 
-    function upgrade(request, socket, head) {
-        if (request.headers.host !== host) return reject(socket, 403);
+    function upgrade(request, socket, head, { host: requestHost = host, basePath: requestPath = basePath } = {}) {
+        if (request.headers.host !== requestHost) return reject(socket, 403);
         let url;
         try {
-            url = new URL(request.url, 'http://' + host);
+            url = new URL(request.url, 'http://' + requestHost);
         } catch {
             return reject(socket, 400);
         }
-        if (basePath && url.pathname !== basePath && !url.pathname.startsWith(basePath + '/')) {
+        if (requestPath && url.pathname !== requestPath && !url.pathname.startsWith(requestPath + '/')) {
             return reject(socket, 404);
         }
-        const path = url.pathname.slice(basePath.length).replace(/\/$/, '') || '/';
+        const path = url.pathname.slice(requestPath.length).replace(/\/$/, '') || '/';
         if (!enabled || !['/', '/api', '/event'].includes(path)) return reject(socket, 404);
-        const denied = oneBotAccess(request, url, host, token);
+        const denied = oneBotAccess(request, url, requestHost, token);
         if (denied) return reject(socket, denied.status);
         const available = accounts();
         const chosen = url.searchParams.get('self_id');
@@ -77,9 +78,12 @@ export function createForwardWs({ host, accounts, dispatch, onState, basePath = 
         update(config) {
             behavior = { format: config.forwardWsFormat, reportSelf: config.forwardWsReportSelf };
             const accessToken = config.forwardWsAccessToken ?? config.accessToken;
-            if (enabled === config.forwardWsEnabled && token === accessToken) return;
+            const nextAddress = config.forwardWsPort === undefined ? undefined
+                : JSON.stringify([config.forwardWsBind, config.forwardWsPort, config.forwardWsPath]);
+            if (enabled === config.forwardWsEnabled && token === accessToken && addressKey === nextAddress) return;
             enabled = config.forwardWsEnabled;
             token = accessToken;
+            addressKey = nextAddress;
             disconnect();
         },
         detach: disconnect,

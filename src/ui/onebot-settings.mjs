@@ -1,11 +1,11 @@
 import { createQqAvatar } from './qq-avatar.mjs';
 
 const endpointTypes = {
-    http: { name: 'httpName', configured: 'httpConfigured', title: 'HTTP API', enabled: 'httpEnabled', token: 'httpAccessToken', hasToken: 'hasHttpAccessToken',
+    http: { name: 'httpName', configured: 'httpConfigured', title: 'HTTP API', enabled: 'httpEnabled', token: 'httpAccessToken', hasToken: 'hasHttpAccessToken', listen: 'http',
         description: '通过 HTTP 调用 OneBot 动作。' },
     'http-post': { name: 'httpPostName', title: 'HTTP 客户端', enabled: 'httpPostEnabled', url: 'httpPostUrl',
         description: '通过 HTTP POST 向下游推送消息和通知。', placeholder: 'http://127.0.0.1:8080/events' },
-    forward: { name: 'forwardWsName', configured: 'forwardWsConfigured',
+    forward: { name: 'forwardWsName', configured: 'forwardWsConfigured', listen: 'forwardWs',
         format: 'forwardWsFormat', self: 'forwardWsReportSelf', title: 'WebSocket 服务端', enabled: 'forwardWsEnabled', token: 'forwardWsAccessToken',
         hasToken: 'hasForwardWsAccessToken',
         description: '下游主动连接 MiaoKo。/ 收发合一，/api 和 /event 分开使用。' },
@@ -22,6 +22,7 @@ export function setupOneBotSettings(api) {
     const result = ui('result');
     const editorSave = ui('editor-save');
     const editorUrl = ui('editor-url');
+    const editorLocal = ui('editor-local-address');
     const editorError = ui('editor-result');
     const tabs = [...ui('tabs').querySelectorAll('[role="tab"]')];
     const token = ui('token');
@@ -46,13 +47,19 @@ export function setupOneBotSettings(api) {
     let accounts = [];
     let accountsKey;
 
-    function localAddress(kind, id) {
-        const localHost = '127.0.0.1:' + settings.localPort;
-        const wsAddress = 'ws://' + localHost + '/';
+    function localAddress(kind, endpoint) {
+        const prefix = endpointTypes[kind].listen;
         const http = kind === 'http';
-        const base = http ? 'http://' + localHost : wsAddress.slice(0, -1);
-        return id && id !== 'default' ? base + '/onebot/' + (http ? 'http' : 'ws') + '/' + id
-            : http ? base : wsAddress;
+        const scheme = http ? 'http://' : 'ws://';
+        const port = endpoint?.[prefix + 'Port'];
+        if (port !== undefined) {
+            const bind = endpoint[prefix + 'Bind'] ?? '127.0.0.1';
+            const path = endpoint[prefix + 'Path'] ?? '/';
+            return scheme + bind + ':' + port + (http && path === '/' ? '' : path);
+        }
+        const base = scheme + '127.0.0.1:' + settings.localPort;
+        return endpoint?.id && endpoint.id !== 'default'
+            ? base + '/onebot/' + (http ? 'http' : 'ws') + '/' + endpoint.id : http ? base : base + '/';
     }
     const hasToken = (spec, endpoint) => endpoint[spec.hasToken] ?? endpoint.hasAccessToken;
     const endpointLists = { http: 'httpEndpoints', forward: 'forwardWsEndpoints',
@@ -67,6 +74,8 @@ export function setupOneBotSettings(api) {
 
     function statusFor(kind, endpoint) {
         if (!endpoint[endpointTypes[kind].enabled]) return ['offline', '已停用'];
+        const listenError = settings?.listenerErrors?.[kind + ':' + endpoint.id];
+        if (listenError) return ['offline', listenError];
         if (kind === 'reverse') {
             const states = accounts.map(account => account.reverseEndpoints?.[endpoint.id] ??
                 (endpoint.id === 'default' && !account.reverseEndpoints ? account.state : undefined));
@@ -122,13 +131,15 @@ export function setupOneBotSettings(api) {
             const field = key => card.querySelector('[data-node="' + key + '"]');
             const title = endpoint[spec.name] || spec.title;
             field('node-title').textContent = title;
-            field('node-address').textContent = spec.url ? endpoint[spec.url] : localAddress(kind, id);
+            field('node-address').textContent = spec.url ? endpoint[spec.url] : localAddress(kind, endpoint);
             const [state, label] = statusFor(kind, endpoint);
             field('node-state').dataset.state = state;
             field('node-state').textContent = label;
-            field('node-auth').textContent = kind === 'http-post'
+            const credentials = kind === 'http-post'
                 ? endpoint.hasHttpPostSecret ? '已设置签名密钥' : '未设置签名密钥'
                 : hasToken(spec, endpoint) ? '已设置访问令牌' : '未设置访问令牌';
+            const sharesWebUI = spec.listen && endpoint[spec.listen + 'Port'] === undefined;
+            field('node-auth').textContent = sharesWebUI ? '共用 WebUI 端口 · ' + credentials : credentials;
             const toggle = field('node-enabled');
             if (!saving) toggle.checked = Boolean(endpoint[spec.enabled]);
             toggle.disabled = saving;
@@ -295,7 +306,12 @@ export function setupOneBotSettings(api) {
         ui('editor-role').value = endpoint?.reverseWsRole ?? 'Universal';
         ui('editor-local').hidden = outgoing;
         ui('editor-target').hidden = !outgoing;
-        ui('editor-local-address').textContent = outgoing ? '' : endpoint ? localAddress(editing, endpoint.id) : '保存后生成独立地址';
+        editorLocal.value = outgoing ? '' : localAddress(editing, endpoint);
+        editorLocal.disabled = outgoing;
+        editorLocal.required = !outgoing;
+        ui('editor-local-hint').textContent = endpoint
+            ? '可修改 IPv4 地址、端口及路径。使用非回环地址时须设置访问令牌。'
+            : '请输入 IPv4 地址和独立端口，可附加路径。使用非回环地址时须设置访问令牌。';
         editorUrl.value = endpoint?.[spec.url] ?? '';
         editorUrl.placeholder = spec.placeholder ?? '';
         editorUrl.disabled = !outgoing;
@@ -351,6 +367,24 @@ export function setupOneBotSettings(api) {
         editorError.hidden = true;
         let saved = false;
         try {
+            if (spec.listen) {
+                const address = new URL(editorLocal.value);
+                const original = endpoints(editing).find(endpoint => endpoint.id === editingId);
+                const unchangedLegacy = original && original[spec.listen + 'Port'] === undefined &&
+                    address.href === new URL(localAddress(editing, original)).href;
+                if (!unchangedLegacy) {
+                    const protocol = editing === 'http' ? 'http:' : 'ws:';
+                    if (address.protocol !== protocol || !address.port ||
+                        address.username || address.password || address.search || address.hash) {
+                        throw new Error('请填写带端口的 ' + protocol + '// IPv4 地址，可附加路径');
+                    }
+                    Object.assign(change, {
+                        [spec.listen + 'Bind']: address.hostname,
+                        [spec.listen + 'Port']: Number(address.port),
+                        [spec.listen + 'Path']: address.pathname,
+                    });
+                }
+            }
             await persist({ endpoint: { kind: editing, id: editingId, change } });
             saved = true;
             result.textContent = '端点已保存';

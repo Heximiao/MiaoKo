@@ -36,6 +36,7 @@ action_types = {
     "set-group-special-title",
     "handle-group-request", "handle-friend-request",
     "resolve-media-url",
+    "watch-sticker-summary",
 }
 
 

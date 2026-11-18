@@ -88,6 +88,7 @@
         <a id="show-instances" href="#instances"><i class="icon icon-window" aria-hidden="true"></i>QQ 实例</a>
         <a id="show-onebot" href="#onebot"><i class="icon icon-sliders" aria-hidden="true"></i>OneBot 配置</a>
         <a id="show-settings" href="#settings"><i class="icon icon-sliders" aria-hidden="true"></i>通用设置</a>
+        <a id="show-quick-actions" href="#quick-actions"><i class="icon icon-activity" aria-hidden="true"></i>快捷触发</a>
         <a id="show-logs" href="#logs"><i class="icon icon-terminal" aria-hidden="true"></i>日志</a>
       </nav>
     </aside>
@@ -278,10 +279,12 @@
                   </label>
                   <div class="endpoint-form-grid">
                     <div id="onebot-editor-local" class="field" hidden>
-                      <span>本机地址</span><code id="onebot-editor-local-address" class="endpoint-address"></code>
+                      <label for="onebot-editor-local-address">本机地址</label>
+                      <input id="onebot-editor-local-address" type="url" maxlength="512" spellcheck="false">
+                      <small id="onebot-editor-local-hint" class="hint"></small>
                     </div>
                     <div id="onebot-editor-target" class="field" hidden>
-                      <label for="onebot-editor-url">目标地址</label>
+                      <label for="onebot-editor-url">目标地址（含对端端口）</label>
                       <input id="onebot-editor-url" type="url" maxlength="2048" spellcheck="false">
                     </div>
                     <label id="onebot-editor-retry-field" class="field" hidden>重连间隔（ms）
@@ -402,6 +405,83 @@
             <footer class="settings-actions">
               <p id="webui-password-feedback" class="form-feedback" role="status"></p>
               <button type="submit">修改密码</button>
+            </footer>
+          </form>
+        </section>
+        <section id="quick-actions-view" aria-labelledby="quick-actions-title" class="general-settings" hidden>
+          <header class="page-heading quick-actions-heading">
+            <h1 id="quick-actions-title">快捷触发</h1>
+            <label>发送账号
+              <select id="quick-actions-account" disabled>
+                <option value="">请先在「QQ 实例」开始监听</option>
+              </select>
+            </label>
+          </header>
+          <form id="quick-poke-form" class="card settings">
+            <header class="card-heading"><h2>戳一戳</h2></header>
+            <div class="settings-fields">
+              <div class="endpoint-form-grid">
+                <label class="field">戳一戳方式
+                  <select name="mode">
+                    <option value="private">私聊</option>
+                    <option value="group">群聊</option>
+                  </select>
+                </label>
+                <label class="field" id="quick-poke-group" hidden>群号
+                  <input name="groupId" type="text" inputmode="numeric" pattern="[1-9][0-9]{4,11}" maxlength="12" autocomplete="off" required disabled>
+                </label>
+              </div>
+              <div class="endpoint-form-grid">
+                <label class="field">目标 QQ 号
+                  <input name="userId" type="text" inputmode="numeric" pattern="[1-9][0-9]{4,11}" maxlength="12" autocomplete="off" required>
+                </label>
+                <label class="field">次数（1–10）
+                  <input name="count" type="number" min="1" max="10" step="1" value="1" required>
+                </label>
+              </div>
+            </div>
+            <footer class="settings-actions">
+              <p id="quick-poke-feedback" class="form-feedback" role="status"></p>
+              <button class="primary" type="submit" disabled>发送戳一戳</button>
+            </footer>
+          </form>
+          <form id="sticker-summary-form" class="card settings">
+            <header class="card-heading"><h2>QQ 表情包摘要</h2></header>
+            <div class="settings-fields">
+              <label class="endpoint-enable">
+                <span><strong>自动添加摘要</strong><small>从 QQ 聊天框发送收藏的图片表情包时，使用下方文字作为会话列表摘要。</small></span>
+                <span class="endpoint-toggle"><input name="enabled" type="checkbox" role="switch" disabled></span>
+              </label>
+              <div id="sticker-summary-field" class="settings-rule" hidden>
+                <label class="field">会话列表摘要
+                  <input name="summary" type="text" maxlength="160" placeholder="留空使用 QQ 默认摘要" disabled>
+                </label>
+                <div class="endpoint-form-grid">
+                  <label class="field">适用会话
+                    <select name="scope" disabled>
+                      <option value="all">全部会话</option>
+                      <option value="group">指定群聊</option>
+                      <option value="private">指定私聊</option>
+                    </select>
+                  </label>
+                  <label class="field">触发次数
+                    <input name="limit" type="number" min="1" max="9007199254740991" step="1" placeholder="不限" disabled>
+                  </label>
+                </div>
+                <label id="sticker-summary-targets" class="field" hidden>
+                  <span id="sticker-summary-target-label">群号</span>
+                  <input name="targets" type="text" autocomplete="off" spellcheck="false" placeholder="多个号码用逗号分隔" disabled>
+                </label>
+                <small class="hint">规则应用于保存时选中的发送账号。每条匹配的表情包消息计一次。</small>
+                <p id="sticker-summary-remaining" class="hint" hidden></p>
+              </div>
+            </div>
+            <footer class="settings-actions">
+              <p id="sticker-summary-feedback" class="form-feedback" role="status"></p>
+              <div class="topbar-actions sticker-summary-actions">
+                <button id="sticker-summary-reset" type="button" disabled>恢复默认</button>
+                <button class="primary" type="submit" disabled>保存摘要设置</button>
+              </div>
             </footer>
           </form>
         </section>

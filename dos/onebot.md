@@ -4,10 +4,12 @@
 
 | 方式 | 如何连接 |
 | --- | --- |
-| HTTP API | 默认 `http://127.0.0.1:8765/<动作名>`，支持 GET 参数和 POST JSON。 |
-| 正向 WebSocket | 默认 `ws://127.0.0.1:8765/`，支持动作和事件。`/api` 仅动作，`/event` 仅事件。 |
+| HTTP API | 设置本机地址并启用，在端点地址后加 `/<动作名>`，支持 GET 参数和 POST JSON。 |
+| 正向 WebSocket | 设置本机地址并启用，端点地址支持动作和事件。地址后加 `/api` 仅动作，加 `/event` 仅事件。 |
 | 反向 WebSocket | 填写下游的 WebSocket 地址。每个监听账号建立独立连接。 |
 | HTTP 回调 | 填写下游 HTTP(S) 地址，以 JSON POST 接收事件。通过 HTTP API 或 WebSocket 执行动作。 |
+
+HTTP API 和正向 WebSocket 可以设置各自的 IPv4 监听地址、端口和路径，保存后生效。监听非回环地址时须设置访问令牌。已有共用 WebUI 端口的端点保留原地址，可通过编辑设置独立端口。
 
 HTTP API 和正向 WebSocket 配置令牌后使用 `Authorization: Bearer <令牌>`。反向 WebSocket 由 MiaoKo 在握手时发送令牌。HTTP 回调配置独立签名密钥后会发送 `X-Signature`。
 

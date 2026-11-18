@@ -1,6 +1,6 @@
 # 第三方许可声明
 
-`build/miaoko-duplex-v22.dll` 和 `build/miaoko-group-text.dll` 由 Zig 0.14.1 构建，包含 Zig 编译器运行库和随附的 MinGW-w64 启动及运行库代码。下列声明适用于相应的第三方代码。
+`build/miaoko-duplex-v33.dll`、`build/miaoko-duplex-v36.dll` 和 `build/miaoko-group-text.dll` 由 Zig 0.14.1 构建，包含 Zig 编译器运行库和随附的 MinGW-w64 启动及运行库代码。下列声明适用于相应的第三方代码。
 
 ## Zig 编译器运行库
 

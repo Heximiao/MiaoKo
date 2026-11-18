@@ -22,13 +22,15 @@ import { createReverseWs } from '../onebot/reverse-ws.mjs';
 import { createForwardWs } from '../onebot/forward-ws.mjs';
 import { handleOneBotHttp, oneBotHttpAction } from '../onebot/http.mjs';
 import { createHttpPost } from '../onebot/http-post.mjs';
-import { ActionError } from '../onebot/actions/shared.mjs';
+import { ActionError, qqId } from '../onebot/actions/shared.mjs';
 import { InvalidImage, prepareMedia } from '../qq/actions/messages/image-files.mjs';
 import { createReceivedImages, mediaBaseUrl, serveMedia } from './received-images.mjs';
 import { createOneBotLogs, describeOneBotEvent, writeTerminal } from './onebot-logs.mjs';
+import { createOneBotListeners, oneBotListeners } from './onebot-listeners.mjs';
 import { createSendQueue } from './send-queue.mjs';
 import { createWebUIAuth } from './webui-auth.mjs';
-import { defaultBindAddress, defaultPort, logLevels, openWebUISettings, validPort, WebUIError } from './webui-settings.mjs';
+import { defaultBindAddress, defaultPort, logLevels, openStickerSummarySettings, openWebUISettings,
+    stickerSummarySettings, validPort, WebUIError } from './webui-settings.mjs';
 
 const python = fileURLToPath(new URL('../../.conda/python.exe', import.meta.url));
 const capture = fileURLToPath(new URL('../qq/hook/capture.py', import.meta.url));
@@ -115,13 +117,26 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
     const auth = createWebUIAuth(webui, source => logs.add('WARN', 'Auth',
         source ? `来源 ${source} 登录失败次数过多，已暂时限速` : '远程登录失败次数过多，已暂时限速'));
     const onebot = createOneBotConfig(fileURLToPath(new URL('../../data/onebot.json', import.meta.url)));
+    const stickerSummaryPath = fileURLToPath(new URL('../../data/sticker-summary.json', import.meta.url));
+    const stickerSummary = await openStickerSummarySettings(stickerSummaryPath);
+    const stickerHooks = new Map();
     const active = new Map();
     const bindings = new Map();
+    const runningPokes = new Set();
     const enqueueSend = createSendQueue();
     const memberLists = new Map();
     const listingGroupFiles = new Set();
     const host = '127.0.0.1:' + port;
     const localOneBot = request => request.socket.remoteAddress === '127.0.0.1' && request.headers.host === host;
+    let settingsUpdate = Promise.resolve();
+    function saveSettings(session, save) {
+        const operation = settingsUpdate.then(() => {
+            if (session.aborted || shuttingDown) throw new WebUIError('登录已失效，请重新登录', 401);
+            return save();
+        });
+        settingsUpdate = operation.catch(() => {});
+        return operation;
+    }
     const publicWebUI = () => ({
         port, savedPort: webui.get().port ?? defaultPort,
         bindAddress, savedBindAddress: webui.get().bindAddress ?? defaultBindAddress,
@@ -253,6 +268,7 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
         }, { supports: dispatch.supports });
     }
     const httpDispatch = loggedDispatch('HTTP');
+    const quickPokeDispatch = loggedDispatch('WebUI');
     const reverse = createOutgoingClients(id => createReverseWs({
         dispatch: loggedDispatch('反向 WS'),
         formatEvent(event, endpointUrl) {
@@ -290,6 +306,44 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
                 `QQ ${account} · 事件回调${state === 'delivered' ? '已送达' : '失败'} · ${detail}`);
         },
     }));
+    let sharedForwardIds = new Set();
+
+    const oneBotServers = createOneBotListeners({
+        reservedPorts: () => [port, webui.get().port ?? defaultPort, mediaPort],
+        async handleHttp(entry, request, response) {
+            const authority = request.socket.localAddress + ':' + entry.port;
+            if (request.headers.host !== authority) return json(response, 403, { error: 'Forbidden' });
+            if (!ids || shuttingDown) return json(response, 503, { error: 'MiaoKo 正在启动或停止' });
+            try {
+                const url = new URL(request.url, 'http://' + authority);
+                const action = oneBotHttpAction(request, url, dispatch, entry.path === '/' ? '' : entry.path);
+                await serveOneBotHttp(request, url, response, action, entry.endpoint, authority);
+            } catch {
+                if (!response.headersSent) json(response, 500, { error: 'OneBot 请求处理失败' });
+                else response.end();
+            }
+        },
+        handleUpgrade(entry, request, socket, head) {
+            const authority = request.socket.localAddress + ':' + entry.port;
+            if (request.headers.host !== authority) {
+                socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+                return;
+            }
+            forward.get(entry.id)?.upgrade(request, socket, head,
+                { host: authority, basePath: entry.path === '/' ? '' : entry.path });
+        },
+        onFailure: message => logs.add('ERROR', 'OneBot', message),
+    });
+
+    async function serveOneBotHttp(request, url, response, action, endpoint, authority) {
+        if (!action || !endpoint?.httpEnabled) {
+            json(response, 404, { status: 'failed', retcode: 1404, data: null, message: 'OneBot HTTP endpoint not found' });
+            return;
+        }
+        const { status, body } = await handleOneBotHttp({ request, url, action, dispatch: httpDispatch,
+            host: authority, accessToken: endpoint.httpAccessToken });
+        json(response, status, body);
+    }
 
     function updateEndpoints(config) {
         const next = { ...generalDefaults, ...config };
@@ -298,12 +352,35 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
         general = next;
         const reverseEndpoints = getEndpoints(config, 'reverse');
         const forwardEndpoints = getEndpoints(config, 'forward');
+        sharedForwardIds = new Set(forwardEndpoints.filter(endpoint => endpoint.forwardWsPort === undefined)
+            .map(endpoint => endpoint.id));
         reportSelf = forwardEndpoints.some(endpoint => endpoint.forwardWsEnabled && endpoint.forwardWsReportSelf) ||
             reverseEndpoints.some(endpoint => endpoint.reverseWsEnabled &&
                 endpoint.reverseWsReportSelf && endpoint.reverseWsRole !== 'Api');
         reverse.update(reverseEndpoints);
         forward.update(forwardEndpoints);
         httpPost.update(getEndpoints(config, 'http-post'));
+    }
+
+    async function watchStickerSummary(account, pid) {
+        const previous = stickerHooks.get(pid);
+        const rule = stickerSummary.get(account);
+        if (shuttingDown || !rule.enabled || !rule.summary ||
+            previous?.state === 'ready' ||
+            previous?.state === 'pending' || !bindings.get(account)?.get(pid)) return;
+        const hook = { state: 'pending' };
+        stickerHooks.set(pid, hook);
+        try {
+            const session = await active.get(pid);
+            const outcome = await session?.request(account, 'watch-sticker-summary', { settingsPath: stickerSummaryPath });
+            if (outcome?.status !== 'ok') throw new Error(outcome?.error ?? 'QQ 监听已结束');
+            hook.state = 'ready';
+        } catch (error) {
+            hook.state = 'failed';
+            if (stickerHooks.get(pid) === hook) {
+                logs.add('WARN', 'QQ', `PID ${pid} · 表情包摘要接入失败 · ${error.message}`);
+            }
+        }
     }
 
     function bind(account, pid, duplex) {
@@ -314,11 +391,15 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
         reverse.attach(account);
         forward.attach(account);
         httpPost.attach(account);
+        void watchStickerSummary(account, pid);
     }
 
     function unbind(account, pid) {
         const processes = bindings.get(account);
-        if (processes?.delete(pid)) logs.add('INFO', 'Session', `QQ ${account} · PID ${pid} 已停止监听`);
+        if (processes?.delete(pid)) {
+            stickerHooks.delete(pid);
+            logs.add('INFO', 'Session', `QQ ${account} · PID ${pid} 已停止监听`);
+        }
         if (processes && !processes.size) {
             bindings.delete(account);
             replyRecords.detach(account);
@@ -487,6 +568,46 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
         }
     }
 
+    async function quickPoke({ selfId, userId, groupId, count }, session) {
+        let account, user, group;
+        try {
+            account = qqId(selfId, '发送账号');
+            user = qqId(userId, '目标 QQ 号');
+            if (groupId !== undefined) group = qqId(groupId, '群号');
+        } catch (error) {
+            if (!(error instanceof ActionError)) throw error;
+            throw new WebUIError(error.message.replace('Invalid ', '') + '无效');
+        }
+        if (!Number.isInteger(count) || count < 1 || count > 10) throw new WebUIError('次数须为 1–10 的整数');
+        const canSend = () => [...(bindings.get(account)?.values() ?? [])].some(Boolean);
+        if (session.aborted) throw new WebUIError('登录已失效，请重新登录', 401);
+        if (!canSend()) throw new WebUIError('发送账号未就绪，请在「QQ 实例」开始监听', 409);
+        if (runningPokes.has(account)) throw new WebUIError('该账号正在执行戳一戳，请稍后再试', 409);
+
+        const packet = {
+            action: 'send_poke',
+            params: { user_id: user, ...(group && { group_id: group }) },
+        };
+        runningPokes.add(account);
+        let sent = 0;
+        try {
+            while (sent < count) {
+                if (session.aborted || shuttingDown) return { sent, error: '管理会话已结束' };
+                if (!canSend()) return { sent, error: '发送账号已停止监听' };
+                const result = await quickPokeDispatch(packet, account);
+                if (result.retcode !== 0) {
+                    const reason = result.retcode === 1501 ? 'QQ 未确认本次戳一戳' : '本次戳一戳失败';
+                    return { sent, error: `第 ${sent + 1} 次：${reason}（${result.message}）` };
+                }
+                sent++;
+                if (sent < count) await delay(500);
+            }
+            return { sent };
+        } finally {
+            runningPokes.delete(account);
+        }
+    }
+
     const server = createServer(async (request, response) => {
         if (!ids || shuttingDown) {
             json(response, 503, { error: 'MiaoKo 正在启动或停止，请稍后重试' });
@@ -524,14 +645,9 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
         try {
             if (action) {
                 const config = await onebot.getEndpoint();
-                const endpoint = getEndpoints(config, 'http').find(entry => entry.id === httpId);
-                if (!endpoint?.httpEnabled) {
-                    json(response, 404, { status: 'failed', retcode: 1404, data: null, message: 'HTTP API is disabled' });
-                    return;
-                }
-                const { status, body } = await handleOneBotHttp({ request, url, action, dispatch: httpDispatch,
-                    host, accessToken: endpoint.httpAccessToken });
-                json(response, status, body);
+                const endpoint = getEndpoints(config, 'http')
+                    .find(entry => entry.id === httpId && entry.httpPort === undefined);
+                await serveOneBotHttp(request, url, response, action, endpoint, host);
                 return;
             }
             const session = auth.session(request, proxied);
@@ -583,10 +699,30 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
                     throw new WebUIError('WebUI 端口须在 1024–65535 且与媒体端口不同');
                 }
                 if (!logLevels.includes(logLevel)) throw new WebUIError('日志级别无效');
-                await webui.save({ port: nextPort, bindAddress: nextBind, logLevel, messageIdPort });
+                await saveSettings(session, async () => {
+                    const config = await onebot.getEndpoint();
+                    if (oneBotListeners(config).some(entry => entry.port === nextPort)) {
+                        throw new WebUIError(`端口 ${nextPort} 已分配给 OneBot 端点`);
+                    }
+                    await webui.save({ port: nextPort, bindAddress: nextBind, logLevel, messageIdPort });
+                });
                 logs.add('INFO', 'WebUI', nextPort === port && nextBind === bindAddress ? '已保存通用设置'
                     : `已保存通用设置，监听配置 ${nextBind}:${nextPort} 将在下次启动时生效`);
                 json(response, 200, publicWebUI());
+            } else if (request.method === 'POST' && request.url === '/api/webui/quick-poke') {
+                json(response, 200, await quickPoke(await readConfig(request), session));
+            } else if (url.pathname === '/api/webui/sticker-summary' && ['GET', 'POST'].includes(request.method)) {
+                const input = request.method === 'POST' ? await readConfig(request) : null;
+                const account = input?.selfId ?? url.searchParams.get('self_id');
+                if (typeof account !== 'string' || !/^[1-9]\d{4,11}$/.test(account)) {
+                    throw new WebUIError('请选择有效的发送账号');
+                }
+                if (input) {
+                    const change = stickerSummarySettings(input);
+                    await saveSettings(session, () => stickerSummary.save(account, change));
+                    for (const pid of bindings.get(account)?.keys() ?? []) void watchStickerSummary(account, pid);
+                }
+                json(response, 200, await stickerSummary.view(account));
             } else if (request.url === '/api/onebot/logs') {
                 if (request.method === 'GET') {
                     logs.stream(response, session);
@@ -604,11 +740,12 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
             } else if (request.method === 'GET' && request.url === '/api/messages') {
                 json(response, 200, inbox.snapshot().map(session => ({
                     ...session, active: active.has(session.pid),
+                    canPoke: bindings.get(session.selfId)?.get(session.pid) === true,
                 })));
             } else if (request.method === 'GET' && request.url === '/api/processes') {
                 json(response, 200, await discover());
             } else if (request.method === 'GET' && request.url === '/api/onebot/config') {
-                json(response, 200, { ...await onebot.get(), localPort: port });
+                json(response, 200, { ...await onebot.get(), localPort: port, listenerErrors: oneBotServers.errors() });
             } else if (request.method === 'GET' && request.url === '/api/onebot/status') {
                 const reverseStates = reverse.status(client => new Map(client.status().map(
                     ({ selfId, state }) => [selfId, state])));
@@ -626,11 +763,18 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
                 }));
             } else if (request.method === 'POST' && request.url === '/api/onebot/config') {
                 const change = await readConfig(request);
-                if (session.aborted) throw new WebUIError('登录已失效，请重新登录', 401);
-                const config = await onebot.save(change);
+                const config = await saveSettings(session, () => onebot.save(change, async next => {
+                    const listenerChange = await oneBotServers.prepare(next);
+                    return {
+                        rollback: listenerChange.rollback,
+                        commit() {
+                            updateEndpoints(next);
+                            listenerChange.commit();
+                        },
+                    };
+                }));
                 logs.add('INFO', 'OneBot', '已保存连接配置');
-                updateEndpoints(await onebot.getEndpoint());
-                json(response, 200, { ...config, localPort: port });
+                json(response, 200, { ...config, localPort: port, listenerErrors: oneBotServers.errors() });
             } else if (request.method === 'POST') {
                 const action = /^\/api\/processes\/(\d+)\/(start|stop|unload)$/.exec(request.url);
                 const pid = Number(action?.[1]);
@@ -681,7 +825,7 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
             return;
         }
         const id = /^\/onebot\/ws\/([a-f0-9-]{36})(?=\/|\?|$)/.exec(request.url)?.[1] ?? 'default';
-        const endpoint = forward.get(id);
+        const endpoint = sharedForwardIds.has(id) && forward.get(id);
         if (endpoint) endpoint.upgrade(request, socket, head);
         else socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
     });
@@ -714,7 +858,10 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
         if (resetPassword) await auth.reset();
         const name = messageIdPort === defaultPort ? 'message-ids.jsonl' : `message-ids-${messageIdPort}.jsonl`;
         ids = await openMessageIds(fileURLToPath(new URL('../../data/' + name, import.meta.url)));
-        updateEndpoints(await onebot.getEndpoint());
+        const initialConfig = await onebot.getEndpoint();
+        const listeners = await oneBotServers.prepare(initialConfig, true);
+        updateEndpoints(initialConfig);
+        listeners.commit();
         if (!webui.get().licenseNoticeShown) {
             writeTerminal('INFO', 'License', 'MiaoKo 非商业有限再分发许可 1.0。商业使用须事先获得权利人的书面许可，使用及再分发条款详见 LICENSE。');
             await webui.save({ licenseNoticeShown: true });
@@ -744,14 +891,16 @@ export async function runDashboard({ port: portOverride, bind: bindOverride, pub
     } finally {
         shuttingDown = true;
         auth.close();
+        await settingsUpdate;
         logs.close();
         const mediaClosed = mediaServer?.listening ? new Promise(resolve => mediaServer.close(resolve)) : undefined;
         const closed = server.listening ? new Promise(resolve => server.close(resolve)) : undefined;
         reverse.close();
         forward.close();
+        const oneBotClosed = oneBotServers.close();
         httpPost.close();
         await Promise.allSettled([...active.values()].map(async session => (await session).close()));
-        await Promise.all([closed, mediaClosed]);
+        await Promise.all([closed, mediaClosed, oneBotClosed]);
         await Promise.all(publications.values());
         await ids?.close();
     }
