@@ -16,6 +16,8 @@ const extras = {
     forwardWsReportSelf: false, reverseWsReportSelf: false, reverseWsRetryMs: 0,
 };
 const endpointTokens = ['httpAccessToken', 'forwardWsAccessToken', 'reverseWsAccessToken'];
+const accountId = value => typeof value === 'string' && /^[1-9]\d{4,11}$/.test(value);
+const legacyAddressFields = ['httpPort', 'httpBind', 'httpPath', 'forwardWsPort', 'forwardWsBind', 'forwardWsPath'];
 
 const endpointTypes = {
     http: {
@@ -41,10 +43,16 @@ const endpointTypes = {
 export function getEndpoints(settings, kind) {
     const type = endpointTypes[kind];
     if (settings[type.list]) return settings[type.list];
-    if (type.url ? !settings[type.url] : settings[type.configured] === false) return [];
+    const configured = type.url ? Boolean(settings[type.url]) : settings[type.configured] ??
+        type.fields.some(key => Boolean(settings[key]));
+    if (!configured) return [];
     const legacy = Object.fromEntries(type.fields.map(key => [key, settings[key]]));
     if (kind !== 'http-post') legacy[type.token] ??= settings.accessToken;
     return [{ ...legacy, id: 'default' }];
+}
+
+export function getBoundEndpoints(settings, kind) {
+    return getEndpoints(settings, kind).filter(endpoint => accountId(endpoint.selfId));
 }
 
 export function serverEndpointPath(kind, id) {
@@ -79,6 +87,8 @@ export function createOneBotConfig(path) {
             ])),
             ...Object.fromEntries(Object.keys(extras).filter(key => settings[key] !== undefined)
                 .map(key => [key, settings[key]])),
+            ...Object.fromEntries(legacyAddressFields.filter(key => settings[key] !== undefined)
+                .map(key => [key, settings[key]])),
             ...Object.fromEntries(endpointTokens.filter(key => settings[key] !== undefined)
                 .map(key => ['has' + key[0].toUpperCase() + key.slice(1), Boolean(settings[key])])) };
     }
@@ -94,6 +104,10 @@ export function createOneBotConfig(path) {
         },
         save(input, prepare) {
             const mutation = input?.endpoint;
+            const legacyAccount = input?.legacyAccount;
+            if (legacyAccount !== undefined && (!accountId(legacyAccount) || mutation !== undefined)) {
+                throw new OneBotConfigError('请选择有效的迁移账号');
+            }
             let type;
             let endpointChange;
             if (mutation !== undefined) {
@@ -104,6 +118,10 @@ export function createOneBotConfig(path) {
                 }
                 type = endpointTypes[mutation.kind];
                 endpointChange = mutation.remove ? {} : validate(mutation.change);
+                const owner = endpointChange.selfId;
+                if (owner !== undefined && !accountId(owner)) {
+                    throw new OneBotConfigError('请选择有效的端点账号');
+                }
             }
             const change = validate(input);
             const operation = writes.then(async () => {
@@ -133,11 +151,21 @@ export function createOneBotConfig(path) {
                     const token = change[key] ?? current[key];
                     if (token !== undefined) next[key] = token;
                 }
+                for (const key of legacyAddressFields) {
+                    if (current[key] !== undefined) next[key] = current[key];
+                }
                 if ((next.reverseWsEnabled && !next.reverseWsUrl) || (next.httpPostEnabled && !next.httpPostUrl)) {
                     throw new OneBotConfigError('启用端点前请填写地址');
                 }
                 for (const [kind, outgoing] of Object.entries(endpointTypes)) {
                     if (current[outgoing.list]) next[outgoing.list] = current[outgoing.list];
+                    if (legacyAccount !== undefined) {
+                        const endpoints = getEndpoints(current, kind);
+                        if (endpoints.some(endpoint => !accountId(endpoint.selfId))) {
+                            next[outgoing.list] = endpoints.map(endpoint => accountId(endpoint.selfId)
+                                ? endpoint : { ...endpoint, selfId: legacyAccount });
+                        }
+                    }
                     if (outgoing !== type) continue;
                     const endpoints = getEndpoints(current, kind);
                     const existing = endpoints.find(endpoint => endpoint.id === mutation.id);
@@ -148,7 +176,9 @@ export function createOneBotConfig(path) {
                         next[outgoing.list] = endpoints.filter(endpoint => endpoint.id !== mutation.id);
                         continue;
                     }
-                    const updated = { ...existing, id: existing?.id ?? randomUUID() };
+                    const selfId = endpointChange.selfId ?? existing?.selfId;
+                    if (!accountId(selfId)) throw new OneBotConfigError('请先绑定端点账号');
+                    const updated = { ...existing, id: existing?.id ?? randomUUID(), selfId };
                     for (const key of outgoing.fields) {
                         if (endpointChange[key] !== undefined) updated[key] = endpointChange[key];
                     }

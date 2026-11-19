@@ -37,6 +37,10 @@ open_process = api("OpenProcess", handle, dword, boolean, dword)
 get_process_times = api("GetProcessTimes", boolean, handle, *([c.POINTER(w.FILETIME)] * 4))
 
 
+class AccountInspectionBusy(RuntimeError):
+    """Restart Manager could not provide a stable ownership snapshot."""
+
+
 def filetime(value):
     return (value.dwHighDateTime << 32) | value.dwLowDateTime
 
@@ -63,18 +67,19 @@ def owners(path):
         rm_check(rm.RmRegisterResources(session, 1, (w.LPCWSTR * 1)(str(path)), 0, None, 0, None))
         needed = w.UINT()
         reasons = dword()
-        processes = None
+        processes = (ProcessInfo * 8)()
         for _ in range(4):
-            count = w.UINT(len(processes) if processes is not None else 0)
+            count = w.UINT(len(processes))
             result = rm.RmGetList(session, c.byref(needed), c.byref(count), processes, c.byref(reasons))
             if result != 234:  # ERROR_MORE_DATA
                 rm_check(result)
                 return {
                     (item.process.pid, filetime(item.process.started))
-                    for item in (processes or ())[:count.value]
+                    for item in processes[:count.value]
                 }
-            processes = (ProcessInfo * needed.value)()
-        raise RuntimeError("QQ database ownership changed during inspection")
+            # Leave room when the process list grows between calls.
+            processes = (ProcessInfo * max(needed.value + 4, len(processes) * 2))()
+        raise AccountInspectionBusy("QQ database ownership changed during inspection")
     finally:
         rm.RmEndSession(session)
 

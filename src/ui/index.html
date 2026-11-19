@@ -188,13 +188,14 @@
         <section id="onebot-view" aria-labelledby="onebot-title" hidden>
           <div class="endpoint-layout">
             <aside class="card endpoint-accounts" aria-labelledby="endpoint-accounts-title">
-              <header class="card-heading"><h2 id="endpoint-accounts-title">监听账号</h2></header>
+              <header class="card-heading"><h2 id="endpoint-accounts-title">端点账号</h2></header>
               <div id="onebot-accounts"></div>
             </aside>
             <div class="endpoint-main">
               <header class="endpoint-heading">
-                <div class="heading-copy"><h1 id="onebot-title">OneBot 协议端点</h1><p class="hint">所有监听账号共用此配置</p></div>
+                <div class="heading-copy"><h1 id="onebot-title">OneBot 协议端点</h1><p id="onebot-scope" class="hint"></p></div>
                 <div class="endpoint-heading-actions">
+                  <button id="onebot-bind-legacy" type="button" hidden>迁入旧端点</button>
                   <button id="onebot-create" type="button" hidden>新建端点</button>
                 </div>
               </header>
@@ -412,9 +413,12 @@
           <header class="page-heading quick-actions-heading">
             <h1 id="quick-actions-title">快捷触发</h1>
             <label>发送账号
-              <select id="quick-actions-account" disabled>
-                <option value="">请先在「QQ 实例」开始监听</option>
-              </select>
+              <span class="quick-actions-account-picker">
+                <span id="quick-actions-account-avatar" hidden></span>
+                <select id="quick-actions-account" disabled>
+                  <option value="">请先在「QQ 实例」开始监听</option>
+                </select>
+              </span>
             </label>
           </header>
           <form id="quick-poke-form" class="card settings">
@@ -439,6 +443,11 @@
                   <input name="count" type="number" min="1" max="10" step="1" value="1" required>
                 </label>
               </div>
+              <div class="endpoint-form-grid">
+                <label class="field">发送间隔（秒）
+                  <input name="interval" type="number" min="0.1" max="2" step="0.1" value="0.5" required>
+                </label>
+              </div>
             </div>
             <footer class="settings-actions">
               <p id="quick-poke-feedback" class="form-feedback" role="status"></p>
@@ -448,42 +457,92 @@
           <form id="sticker-summary-form" class="card settings">
             <header class="card-heading"><h2>QQ 表情包摘要</h2></header>
             <div class="settings-fields">
-              <label class="endpoint-enable">
-                <span><strong>自动添加摘要</strong><small>从 QQ 聊天框发送收藏的图片表情包时，使用下方文字作为会话列表摘要。</small></span>
-                <span class="endpoint-toggle"><input name="enabled" type="checkbox" role="switch" disabled></span>
+              <label class="field">会话列表摘要
+                <input name="summary" type="text" maxlength="160" placeholder="留空使用 QQ 默认摘要" disabled>
               </label>
-              <div id="sticker-summary-field" class="settings-rule" hidden>
-                <label class="field">会话列表摘要
-                  <input name="summary" type="text" maxlength="160" placeholder="留空使用 QQ 默认摘要" disabled>
+              <label class="endpoint-enable">
+                <span><strong>快速模式</strong><small>摘要用在下一条符合条件的收藏表情包上，随后自动清空输入栏。</small></span>
+                <span class="endpoint-toggle"><input name="quickMode" type="checkbox" role="switch" disabled></span>
+              </label>
+              <div class="endpoint-form-grid">
+                <label class="field">适用会话
+                  <select name="scope" disabled>
+                    <option value="all">全部会话</option>
+                    <option value="selected">指定会话</option>
+                  </select>
                 </label>
-                <div class="endpoint-form-grid">
-                  <label class="field">适用会话
-                    <select name="scope" disabled>
-                      <option value="all">全部会话</option>
-                      <option value="group">指定群聊</option>
-                      <option value="private">指定私聊</option>
-                    </select>
-                  </label>
-                  <label class="field">触发次数
-                    <input name="limit" type="number" min="1" max="9007199254740991" step="1" placeholder="不限" disabled>
-                  </label>
-                </div>
-                <label id="sticker-summary-targets" class="field" hidden>
-                  <span id="sticker-summary-target-label">群号</span>
-                  <input name="targets" type="text" autocomplete="off" spellcheck="false" placeholder="多个号码用逗号分隔" disabled>
+                <label class="field" id="sticker-summary-limit">触发次数
+                  <input name="limit" type="number" min="1" max="9007199254740991" step="1" placeholder="不限" disabled>
                 </label>
-                <small class="hint">规则应用于保存时选中的发送账号。每条匹配的表情包消息计一次。</small>
-                <p id="sticker-summary-remaining" class="hint" hidden></p>
               </div>
+              <div id="sticker-summary-targets" class="sticker-conversations" hidden>
+                <label class="field">搜索会话
+                  <input name="conversation" type="search" autocomplete="off" spellcheck="false"
+                    placeholder="输入 QQ 号、群号或名称" disabled>
+                </label>
+                <p id="sticker-summary-search-status" class="hint" role="status" hidden></p>
+                <ul id="sticker-summary-results" class="sticker-conversation-results" aria-label="搜索结果" hidden></ul>
+                <div id="sticker-summary-selected" class="sticker-conversation-selected" aria-label="已选会话"></div>
+              </div>
+              <p id="sticker-summary-remaining" class="hint" hidden></p>
             </div>
             <footer class="settings-actions">
               <p id="sticker-summary-feedback" class="form-feedback" role="status"></p>
               <div class="topbar-actions sticker-summary-actions">
+                <button id="sticker-summary-retry" type="button" hidden>重试</button>
                 <button id="sticker-summary-reset" type="button" disabled>恢复默认</button>
-                <button class="primary" type="submit" disabled>保存摘要设置</button>
               </div>
             </footer>
           </form>
+          <form id="quick-forward-form" class="card settings">
+            <header class="card-heading"><h2>合并转发</h2></header>
+            <fieldset id="quick-forward-fields" class="settings-fields quick-forward-fields" disabled>
+              <div class="sticker-conversations">
+                <label class="field">目标会话
+                  <input name="conversation" type="search" autocomplete="off" spellcheck="false"
+                    placeholder="搜索群名、好友、QQ 号或群号">
+                </label>
+                <p id="quick-forward-search-status" class="hint" role="status" hidden></p>
+                <ul id="quick-forward-results" class="sticker-conversation-results" aria-label="会话搜索结果" hidden></ul>
+                <div id="quick-forward-target" class="sticker-conversation-selected" aria-label="已选目标会话"></div>
+              </div>
+              <div id="quick-forward-nodes" class="quick-forward-nodes"></div>
+              <button id="quick-forward-add" class="quick-forward-add" type="button">＋ 添加节点</button>
+            </fieldset>
+            <footer class="settings-actions">
+              <p id="quick-forward-feedback" class="form-feedback" role="status"></p>
+              <button class="primary" type="submit" disabled>发送合并转发</button>
+            </footer>
+          </form>
+          <template id="quick-forward-node">
+            <fieldset class="quick-forward-node">
+              <legend></legend>
+              <label class="field">卡片预览昵称
+                <input name="nickname" type="text" maxlength="160" autocomplete="off"
+                  placeholder="留空时使用头像对应的 QQ 昵称">
+              </label>
+              <div class="field">
+                <label class="field">头像与显示昵称（可选）
+                  <span class="quick-forward-avatar-field">
+                    <span class="quick-forward-avatar"></span>
+                    <input name="avatar" type="text" maxlength="1024" autocomplete="off"
+                      placeholder="搜索好友，或输入 QQ 号或 HTTPS 图片地址">
+                  </span>
+                </label>
+                <ul class="sticker-conversation-results quick-forward-avatar-results" aria-label="可选好友头像" hidden></ul>
+                <small class="hint">留空使用发送账号头像。QQ 是否显示自定义图片地址取决于客户端。</small>
+              </div>
+              <label class="field">正文
+                <textarea name="content" rows="3" maxlength="8192" placeholder="可填写文字，也可只添加图片"></textarea>
+              </label>
+              <label class="field">图片
+                <input class="quick-forward-images" name="images" type="file"
+                  accept=".png,.apng,.jpg,.jpeg,.gif,.webp,.bmp" multiple>
+                <small class="hint">每个节点最多 4 张，单张最多 5 MiB。</small>
+              </label>
+              <button class="quick-forward-remove" type="button">移除节点</button>
+            </fieldset>
+          </template>
         </section>
         <section id="logs-view" aria-labelledby="logs-title" hidden>
           <section class="card log-card">

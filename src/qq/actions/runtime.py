@@ -6,7 +6,7 @@ from time import monotonic, sleep, time
 
 from hook.native_session import NativeSession
 from build_profile import require_build_profile
-from win_account import AccountDetector
+from win_account import AccountDetector, AccountInspectionBusy
 from win_process import locate_qq
 
 
@@ -16,6 +16,7 @@ class PendingAction:
         self.type = command["type"]
         self.submitted = False
         self.dispatch_deadline = monotonic() + 5
+        self.retry_account_at = 0
         self.deadline = monotonic() + 30
         self.directory = TemporaryDirectory(prefix="qq-action-", dir=root / "build")
         self.report = Path(self.directory.name) / "result.json"
@@ -31,7 +32,8 @@ class PendingAction:
             nodes_path.write_text(json.dumps(params.pop("nodes")), encoding="utf-8")
             params["nodesPath"] = str(nodes_path)
             expires_after = 27
-        elif self.type in {"get-essence-list", "get-group-notice", "delete-group-notice", "set-group-settings"}:
+        elif self.type in {"get-essence-list", "get-group-notice", "delete-group-notice", "set-group-settings",
+                           "send-poke-batch"}:
             expires_after = 27
         else:
             expires_after = 15
@@ -55,7 +57,14 @@ class PendingAction:
             return None
         if monotonic() >= self.dispatch_deadline:
             return {"status": "failed", "error": "QQ action queue is not ready"}
-        if detector.current() != account:
+        if monotonic() < self.retry_account_at:
+            return None
+        try:
+            current = detector.current()
+        except AccountInspectionBusy:
+            self.retry_account_at = monotonic() + 0.25
+            return None
+        if current != account:
             return {"status": "failed", "error": "QQ account changed"}
         if len(self.request) >= 8192:
             return {"status": "failed", "error": "Native action metadata exceeds 8191 bytes"}

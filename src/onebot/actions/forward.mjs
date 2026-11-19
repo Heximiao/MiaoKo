@@ -1,7 +1,28 @@
 import { ActionError, qqId } from './shared.mjs';
 import { messageRequest, oneBotMessageId } from './message-params.mjs';
 
-function customGroupNodes(nodes, account, peer) {
+function forwardAvatar(value) {
+    if (value === undefined || value === '') return {};
+    if (typeof value !== 'string' || value.length > 1024 || /[\x00-\x20\x7f]/.test(value)) {
+        throw new ActionError(1400, 'Node avatars must be a QQ number or an HTTPS image URL');
+    }
+    if (/^[1-9]\d{4,11}$/.test(value)) {
+        if (Number(value) > 0xffffffff) throw new ActionError(1400, 'Node avatar QQ number exceeds the forward format limit');
+        return { avatar: `https://q.qlogo.cn/headimg_dl?dst_uin=${value}&spec=0&img_type=jpg`,
+            nodeSender: value };
+    }
+    const url = URL.canParse(value) && new URL(value);
+    if (!url || url.protocol !== 'https:' || url.username || url.password || url.href.length > 1024) {
+        throw new ActionError(1400, 'Node avatars must be a QQ number or an HTTPS image URL');
+    }
+    return { avatar: url.href };
+}
+
+function validName(name) {
+    return typeof name === 'string' && name.trim() && !name.includes('\0') && Buffer.byteLength(name) <= 160;
+}
+
+function customNodes(nodes, account, kind, field, peer) {
     if ([account, peer].some(id => Number(id) > 0xffffffff)) {
         throw new ActionError(1400, 'Custom forwarding requires 32-bit QQ and group IDs');
     }
@@ -9,12 +30,12 @@ function customGroupNodes(nodes, account, peer) {
     return nodes.map(({ data }) => {
         const user = qqId(data.user_id ?? data.uin, 'node user_id');
         const nickname = data.nickname ?? data.name;
-        if (user !== account || typeof nickname !== 'string' || !nickname.trim() ||
-            nickname.includes('\0') || Buffer.byteLength(nickname) > 160) {
+        const previewName = data.preview_name;
+        if (user !== account || !validName(nickname) || (previewName !== undefined && !validName(previewName))) {
             throw new ActionError(1400, 'Custom nodes require the bound account and a valid display name');
         }
-        const { segments } = messageRequest({ group_id: peer, message: data.content,
-            auto_escape: typeof data.content === 'string' }, 'group', 8 * 1024);
+        const { segments } = messageRequest({ [field]: peer, message: data.content,
+            auto_escape: typeof data.content === 'string' }, kind, 8 * 1024);
         for (const segment of segments) {
             if (segment.type === 'text') textBytes += Buffer.byteLength(segment.data.text);
             else if (segment.type !== 'image') {
@@ -22,7 +43,7 @@ function customGroupNodes(nodes, account, peer) {
             }
         }
         if (textBytes > 64 * 1024) throw new ActionError(1400, 'Forward text exceeds 64 KiB');
-        return { nickname, segments };
+        return { nickname, ...(previewName !== undefined && { previewName }), ...forwardAvatar(data.avatar), segments };
     });
 }
 
@@ -38,8 +59,8 @@ async function sendForward(kind, params, account, { ids, sendForwardBatch }) {
     }
     const reference = { kind, peer };
     let request;
-    if (kind === 'group' && nodes.every(node => node.data.id === undefined)) {
-        request = { reference, nodes: customGroupNodes(nodes, account, peer) };
+    if (nodes.every(node => node.data.id === undefined)) {
+        request = { reference, nodes: customNodes(nodes, account, kind, field, peer) };
     } else {
         const references = nodes.map(({ data }) => {
             if (data.id === undefined) throw new ActionError(1400, 'Expected a forward node with data.id');

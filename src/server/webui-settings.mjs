@@ -40,29 +40,36 @@ export async function openWebUISettings(path) {
 }
 
 export function stickerSummarySettings(input) {
-    const { enabled, summary, scope = 'all', targets = [], limit = null } = input;
-    if (typeof enabled !== 'boolean' || typeof summary !== 'string' ||
+    const { summary, quickMode = false, scope = 'all', targets = [], limit = null } = input;
+    if (typeof summary !== 'string' ||
         Buffer.byteLength(summary) > 160 || /[\r\n\0]/.test(summary)) {
         throw new WebUIError('摘要须为单行文字，长度不能超过 160 个 UTF-8 字节');
     }
-    if (!['all', 'group', 'private'].includes(scope) || !Array.isArray(targets) ||
-        targets.some(target => typeof target !== 'string' || !/^[1-9]\d{4,11}$/.test(target)) ||
-        (scope !== 'all' && enabled && summary.trim() && !targets.length)) {
+    if (typeof quickMode !== 'boolean') throw new WebUIError('快速模式设置无效');
+    if (!['all', 'selected'].includes(scope) || !Array.isArray(targets) ||
+        targets.some(target => !target || !['group', 'private'].includes(target.kind) ||
+            typeof target.id !== 'string' || !/^[1-9]\d{4,11}$/.test(target.id))) {
         throw new WebUIError('请填写有效的群号或私聊 QQ 号');
     }
     if (limit !== null && (!Number.isSafeInteger(limit) || limit < 1)) {
         throw new WebUIError('次数须为正整数，留空表示不限');
     }
-    return { enabled, summary: summary.trim(), scope,
-        targets: scope === 'all' ? [] : [...new Set(targets)].sort(), limit };
+    const unique = new Map(targets.map(({ kind, id }) => [kind + ':' + id, { kind, id }]));
+    return { summary: summary.trim(), quickMode, scope,
+        targets: [...unique.keys()].sort().map(key => unique.get(key)), limit };
 }
 
 export async function openStickerSummarySettings(path) {
     const settings = await readSettings(path);
-    const defaults = stickerSummarySettings({ enabled: false, summary: '' });
+    const defaults = stickerSummarySettings({ summary: '' });
+    const quota = rule => rule.quickMode ? 1 : rule.limit;
     function readRule(input) {
-        const rule = stickerSummarySettings({ ...defaults, ...input });
-        const runId = rule.limit !== null && typeof input?.runId === 'string' &&
+        const migrated = ['group', 'private'].includes(input?.scope)
+            ? { ...input, scope: 'selected', targets: (input.targets ?? []).map(id => ({ kind: input.scope, id })) }
+            : input;
+        const rule = stickerSummarySettings({ ...defaults, ...migrated,
+            summary: input?.enabled === false ? '' : input?.summary ?? '' });
+        const runId = quota(rule) !== null && typeof input?.runId === 'string' &&
             /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/.test(input.runId) ? input.runId : null;
         return { ...rule, runId };
     }
@@ -73,22 +80,31 @@ export async function openStickerSummarySettings(path) {
     if (legacy && /^[1-9]\d{4,11}$/.test(settings?.selfId ?? '')) accounts[settings.selfId] = legacy;
     const store = writableSettings(path, { accounts, legacy: Object.keys(accounts).length ? null : legacy });
     const usagePath = id => join(path + '.usage', id);
-    const rule = ({ summary, scope, targets, limit }) => JSON.stringify([summary, scope, targets, limit]);
+    const rule = value => JSON.stringify([value.summary, value.scope, value.scope === 'selected' ? value.targets : [],
+        value.quickMode, quota(value)]);
     const get = account => store.get().accounts[account] ?? store.get().legacy ?? defaults;
+    async function view(account) {
+        const { runId: current, ...value } = get(account);
+        const limit = quota(value);
+        const used = current ? (await readdir(usagePath(current)).catch(error => {
+            if (error.code !== 'ENOENT') throw error;
+            return null;
+        }))?.length : null;
+        const remaining = limit === null ? null : Math.max(0, limit - (used ?? limit));
+        return { ...value, summary: value.quickMode && remaining === 0 ? '' : value.summary, remaining };
+    }
     return {
         get,
-        async view(account) {
-            const { runId: current, ...value } = get(account);
-            const used = current ? (await readdir(usagePath(current)).catch(error => {
-                if (error.code !== 'ENOENT') throw error;
-                return null;
-            }))?.length : null;
-            return { ...value, remaining: value.limit === null ? null : Math.max(0, value.limit - (used ?? value.limit)) };
-        },
-        async save(account, change) {
+        view,
+        async save(account, patch) {
             const previous = get(account);
+            const current = await view(account);
+            const change = stickerSummarySettings({ ...current, ...patch });
             const existing = previous.runId;
-            const next = change.limit === null ? null : existing && rule(previous) === rule(change) ? existing : randomUUID();
+            const keepRun = existing && !(previous.quickMode && current.remaining === 0) &&
+                (rule(previous) === rule(change) ||
+                    (previous.quickMode && change.quickMode && previous.summary === change.summary));
+            const next = change.summary && quota(change) !== null ? keepRun ? existing : randomUUID() : null;
             if (next && next !== existing) await mkdir(usagePath(next), { recursive: true });
             try {
                 await store.save({ accounts: { ...store.get().accounts, [account]: { ...change, runId: next } }, legacy: null });

@@ -1,19 +1,19 @@
 # OneBot 11 接入
 
-在「QQ 实例」开始监听目标账号，再到「OneBot 配置」启用端点。端点默认关闭，新建端点的实际地址以控制台显示为准。
+在「QQ 实例」开始监听目标账号，再到「OneBot 配置」左侧选择该账号并启用端点。端点默认关闭，新建端点的实际地址以控制台显示为准。
 
 | 方式 | 如何连接 |
 | --- | --- |
 | HTTP API | 设置本机地址并启用，在端点地址后加 `/<动作名>`，支持 GET 参数和 POST JSON。 |
 | 正向 WebSocket | 设置本机地址并启用，端点地址支持动作和事件。地址后加 `/api` 仅动作，加 `/event` 仅事件。 |
-| 反向 WebSocket | 填写下游的 WebSocket 地址。每个监听账号建立独立连接。 |
+| 反向 WebSocket | 填写下游的 WebSocket 地址。仅为端点所属的账号建立连接。 |
 | HTTP 回调 | 填写下游 HTTP(S) 地址，以 JSON POST 接收事件。通过 HTTP API 或 WebSocket 执行动作。 |
 
 HTTP API 和正向 WebSocket 可以设置各自的 IPv4 监听地址、端口和路径，保存后生效。监听非回环地址时须设置访问令牌。已有共用 WebUI 端口的端点保留原地址，可通过编辑设置独立端口。
 
 HTTP API 和正向 WebSocket 配置令牌后使用 `Authorization: Bearer <令牌>`。反向 WebSocket 由 MiaoKo 在握手时发送令牌。HTTP 回调配置独立签名密钥后会发送 `X-Signature`。
 
-多账号时，HTTP API 用参数 `self_id` 选择账号，正向 WebSocket 在连接地址加 `?self_id=QQ号`。反向 WebSocket 按连接绑定账号。
+HTTP 和 WebSocket 端点固定使用所选账号。可以省略 `self_id`，传入时须与端点账号一致。升级后，先在左侧选择 QQ，再点「迁入旧端点」以启用旧配置。
 
 ## 接入 AstrBot
 
@@ -119,4 +119,4 @@ HTTP API 和正向 WebSocket 配置令牌后使用 `Authorization: Bearer <令�
 | `get_status` | 已绑定账号的状态对象 `{ "online": true, "good": true }` |
 | `get_version_info` | `app_name`、`app_version`、`protocol_version`，其中 `protocol_version` 为 `v11` |
 
-账号和状态动作均无需业务参数，仍遵循同一套账号选择规则。
+账号和状态动作均无需业务参数，使用当前端点绑定的 QQ。

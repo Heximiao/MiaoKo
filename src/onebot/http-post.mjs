@@ -70,7 +70,7 @@ export function createHttpPost({ onState } = {}) {
             if (!peer.running) void deliver(peer);
         },
         status(account) {
-            return configured() ? peers.get(account)?.state ?? 'pending' : 'unconfigured';
+            return configured() ? peers.get(account)?.state ?? 'unconfigured' : 'unconfigured';
         },
         close() {
             for (const peer of peers.values()) peer.controller.abort();

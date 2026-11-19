@@ -1,16 +1,16 @@
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { isIPv4 } from 'node:net';
-import { getEndpoints, OneBotConfigError } from '../onebot/config.mjs';
+import { getBoundEndpoints, OneBotConfigError } from '../onebot/config.mjs';
 import { validPort } from './webui-settings.mjs';
 
 export function oneBotListeners(config) {
     return [
-        ...getEndpoints(config, 'http').filter(entry => entry.httpPort !== undefined).map(entry => ({
+        ...getBoundEndpoints(config, 'http').filter(entry => entry.httpPort !== undefined).map(entry => ({
             kind: 'http', id: entry.id, endpoint: entry, port: entry.httpPort, bind: entry.httpBind ?? '127.0.0.1',
             path: entry.httpPath ?? '/', enabled: entry.httpEnabled, token: entry.httpAccessToken,
         })),
-        ...getEndpoints(config, 'forward').filter(entry => entry.forwardWsPort !== undefined).map(entry => ({
+        ...getBoundEndpoints(config, 'forward').filter(entry => entry.forwardWsPort !== undefined).map(entry => ({
             kind: 'forward', id: entry.id, endpoint: entry, port: entry.forwardWsPort,
             bind: entry.forwardWsBind ?? '127.0.0.1', path: entry.forwardWsPath ?? '/',
             enabled: entry.forwardWsEnabled, token: entry.forwardWsAccessToken,

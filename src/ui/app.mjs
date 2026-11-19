@@ -2,7 +2,7 @@ import { setupParticles } from './particles.mjs';
 import { createQqAvatar } from './qq-avatar.mjs';
 import { setupOneBotSettings } from '/onebot-settings.mjs';
 import { createOverviewAlertState, setupOneBotLogs } from '/onebot-logs.mjs';
-import { enterWebUI, setupGeneralSettings, setupQuickPoke, setupStickerSummary, jsonPost } from '/webui.mjs';
+import { enterWebUI, setupGeneralSettings, setupQuickForward, setupQuickPoke, setupStickerSummary, jsonPost } from '/webui.mjs';
 
 const ui = Object.fromEntries(
     ['discover', 'processes', 'title', 'status', 'toggle', 'unload', 'unload-dialog', 'unload-description', 'error', 'messages',
@@ -51,7 +51,9 @@ const showOneBotLogs = setupOneBotLogs(entries => {
 });
 const loadGeneralSettings = setupGeneralSettings(api);
 const stickerSummary = setupStickerSummary(api);
+const updateForwardAccount = setupQuickForward(api);
 const quickPoke = setupQuickPoke(api, () => {
+    updateForwardAccount();
     if (page === 'quick-actions') void stickerSummary.load();
 });
 let signedIn = false;
@@ -188,7 +190,6 @@ async function refresh() {
         sessions = await api('/api/messages');
         showService(true);
         quickPoke.showAccounts(sessions);
-        if (page === 'quick-actions') void stickerSummary.refreshRemaining();
         renderOverviewSessions();
         render();
     } catch {
@@ -405,6 +406,7 @@ if (signedIn) {
     navigate();
     setInterval(() => { if (page === 'instances') refresh(); }, 250);
     setInterval(() => { if (page !== 'instances') refresh(); }, 2000);
+    setInterval(() => { if (page === 'quick-actions') void stickerSummary.refreshRemaining(); }, 600);
     setInterval(refreshOneBot, 2000);
     setInterval(refreshHost, 5000);
 }

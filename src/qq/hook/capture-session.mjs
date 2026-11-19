@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { openMessagePipe } from '../../ipc/pipe.mjs';
 
@@ -12,6 +13,12 @@ const MAX_WAITING_ACTIONS = 32;
 const MAX_WAITING_PROFILE_LIKES = 16;
 const ACTION_QUEUE_TIMEOUT_MS = 10000;
 const serialActions = new Set(['send-message', 'send-poke']);
+const serialKey = type => type === 'send-poke-batch' ? 'send-poke' : type;
+
+export function backgroundPython(python) {
+    const windowless = python.replace(/([\\/])python\.exe$/i, '$1pythonw.exe');
+    return process.platform === 'win32' && windowless !== python && existsSync(windowless) ? windowless : python;
+}
 
 export async function startCapture({ pid, python, capture, seconds, inbox, onAttached, onMessages, onDetached,
     onNoticeListener }) {
@@ -24,9 +31,11 @@ export async function startCapture({ pid, python, capture, seconds, inbox, onAtt
     );
     const args = [capture, '--pid', String(pid), '--pipe', pipe.path];
     if (seconds !== undefined) args.push('--seconds', String(seconds));
-    const child = spawn(python, args, {
+    const child = spawn(backgroundPython(python), args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        // Closing the terminal must leave the worker alive long enough to unload the QQ hook on stdin EOF.
+        detached: process.platform === 'win32',
     });
     const control = createInterface({ input: child.stdout });
     let timer;
@@ -83,11 +92,13 @@ export async function startCapture({ pid, python, capture, seconds, inbox, onAtt
 
     function pumpActions() {
         while (!stopping && !child.stdin.destroyed && !child.stdin.writableEnded && pending.size < MAX_ACTIVE_ACTIONS) {
-            const activeTypes = [...pending.values()].map(action => action.type);
+            const activeTypes = [...pending.values()].map(action => serialKey(action.type));
             const activeLikes = activeTypes.filter(type => type === 'send-profile-like').length;
-            const index = waiting.findIndex(({ type }) =>
-                (!serialActions.has(type) || !activeTypes.includes(type)) &&
-                (type !== 'send-profile-like' || activeLikes < MAX_ACTIVE_PROFILE_LIKES));
+            const index = waiting.findIndex(({ type }) => {
+                const key = serialKey(type);
+                return (!serialActions.has(key) || !activeTypes.includes(key)) &&
+                    (type !== 'send-profile-like' || activeLikes < MAX_ACTIVE_PROFILE_LIKES);
+            });
             if (index === -1) return;
             const [action] = waiting.splice(index, 1);
             clearTimeout(action.timer);

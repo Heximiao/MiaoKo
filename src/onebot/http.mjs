@@ -7,7 +7,7 @@ export function oneBotHttpAction(request, url, dispatch, basePath = '') {
     if (action && dispatch.supports(action)) return action;
 }
 
-export async function handleOneBotHttp({ request, url, action, dispatch, host, accessToken }) {
+export async function handleOneBotHttp({ request, url, action, dispatch, host, accessToken, selfId }) {
     const fail = (status, message) => ({ status, body: { status: 'failed', retcode: 100, data: null, message } });
     const denied = oneBotAccess(request, url, host, accessToken);
     if (denied) return fail(denied.status, denied.message);
@@ -35,7 +35,7 @@ export async function handleOneBotHttp({ request, url, action, dispatch, host, a
             return fail(400, 'Invalid request body');
         }
         if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(400, 'Expected an object for params');
-        return { status: 200, body: await dispatch({ action, params: { ...params, ...body } }) };
+        return { status: 200, body: await dispatch({ action, params: { ...params, ...body } }, selfId) };
     }
-    return { status: 200, body: await dispatch({ action, params }) };
+    return { status: 200, body: await dispatch({ action, params }, selfId) };
 }

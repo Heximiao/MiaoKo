@@ -2,6 +2,7 @@
 import ctypes as c
 import os
 from pathlib import Path
+from time import monotonic, sleep
 
 from win_process import (
     ModuleEntry, api, boolean, check, close, dword, first_module, handle, list_entries,
@@ -33,6 +34,10 @@ class AttachConfig(c.Structure):
 
 class ActionConfig(c.Structure):
     _fields_ = AttachConfig._fields_ + [("request", c.c_char * 8192)]
+
+
+class OwnedAttachConfig(c.Structure):
+    _fields_ = AttachConfig._fields_ + [("owner_pid", dword)]
 
 
 def module_base(pid, path):
@@ -79,7 +84,7 @@ def load_library_entry(pid):
     return remote + loader - owner.value
 
 
-def control_addresses(pid, process, dll, names):
+def control_addresses(pid, process, dll, names, optional=()):
     base = module_base(pid, dll)
     if not base:
         call_remote(process, load_library_entry(pid), (str(dll) + "\0").encode("utf-16-le"))
@@ -88,7 +93,8 @@ def control_addresses(pid, process, dll, names):
             raise RuntimeError("QQ did not load the MiaoKo module")
     local = check(load_local(str(dll), None, 1))
     try:
-        return tuple(base + check(proc(local, name)) - local for name in names)
+        required = tuple(base + check(proc(local, name)) - local for name in names)
+        return required + tuple(base + address - local if (address := proc(local, name)) else None for name in optional)
     finally:
         check(unload_local(local))
 
@@ -117,11 +123,24 @@ class NativeSession:
             names = (b"MiaoKoStart", b"MiaoKoStop")
             if self.duplex:
                 names += (b"MiaoKoSubmit",)
-            start, self.stop, *actions = control_addresses(self.pid, self.process, self.dll, names)
-            self.submit = actions[0] if actions else None
-            result = call_remote(self.process, start, bytes(self.config))
+            optional = (b"MiaoKoStartOwned",) if self.duplex else ()
+            start, self.stop, *actions = control_addresses(self.pid, self.process, self.dll, names, optional)
+            config = self.config
+            if self.duplex:
+                self.submit, owned_start = actions
+                if owned_start:
+                    start = owned_start
+                    config = OwnedAttachConfig(config.call_rva, config.instruction, config.pipe, os.getpid())
+            deadline = monotonic() + 3
+            while True:
+                result = call_remote(self.process, start, bytes(config))
+                if not self.duplex or result != 10 or monotonic() >= deadline:
+                    break
+                sleep(0.15)
             if result == 10:
-                raise RuntimeError("This QQ process already has an active MiaoKo listener")
+                raise RuntimeError("该 QQ 已有 MiaoKo 监听。请先停止另一个 MiaoKo，或等待上一轮监听退出。")
+            if result == 13:
+                raise RuntimeError("QQ 接收入口已被占用或不匹配。如果有旧版 MiaoKo 残留，请彻底退出 QQ 后重新登录。")
             if result:
                 raise RuntimeError(f"Native receiver did not start (status {result})")
             return self

@@ -375,10 +375,88 @@ button:disabled { opacity: .55; cursor: default; }
     gap: 12px 20px;
 }
 .quick-actions-heading label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); }
+.quick-actions-account-picker { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+.quick-actions-account-picker .instance-avatar { width: 30px; height: 30px; }
 .quick-actions-heading select { width: auto; min-width: 148px; max-width: 100%; }
-.settings-rule { display: grid; gap: 14px; }
+.quick-forward-fields { min-width: 0; margin: 0; border: 0; }
+.quick-forward-nodes { display: grid; gap: 14px; min-width: 0; }
+.quick-forward-node {
+    display: grid;
+    min-width: 0;
+    margin: 0;
+    padding: 12px;
+    gap: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.quick-forward-node legend { padding: 0 6px; color: var(--muted); }
+.quick-forward-node textarea {
+    width: 100%;
+    min-height: 5rem;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-soft);
+    color: inherit;
+    font: inherit;
+    resize: vertical;
+}
+.quick-forward-add { justify-self: start; }
+.quick-forward-remove { justify-self: end; }
+.quick-forward-avatar-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+}
+.quick-forward-avatar { display: flex; }
+.quick-forward-images::file-selector-button {
+    margin-inline-end: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.quick-forward-images:enabled::file-selector-button:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-line);
+}
+.quick-forward-images:disabled::file-selector-button { opacity: .55; cursor: default; }
 .sticker-summary-actions { justify-content: flex-end; margin-inline-start: auto; }
 .sticker-summary-actions button { font-size: inherit; }
+.sticker-conversations { display: grid; gap: 10px; min-width: 0; }
+.sticker-conversation-results, .sticker-conversation-selected {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding: 5px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.sticker-conversation-results { max-height: 260px; overflow: auto; list-style: none; }
+.sticker-conversation-selected { background: var(--surface-soft); }
+.sticker-conversation-selected:empty { display: none; }
+.sticker-conversation-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 10px;
+    border-color: transparent;
+    text-align: start;
+}
+.sticker-conversation-row strong, .sticker-conversation-row small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.sticker-conversation-row small { color: var(--muted); }
 
 @supports (appearance: base-select) {
     :is(.settings, .quick-actions-heading) select,
@@ -469,7 +547,17 @@ button:disabled { opacity: .55; cursor: default; }
 }
 .endpoint-accounts .card-heading { padding-block: 14px; }
 #onebot-accounts { padding: 8px; }
-.endpoint-account { display: flex; align-items: center; gap: 9px; padding: 9px 8px; }
+.endpoint-account {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 9px 8px;
+    border-color: transparent;
+    text-align: start;
+}
+.endpoint-account[aria-pressed="true"] { background: var(--accent-hover); border-color: var(--accent-line); }
+.endpoint-account small { color: var(--muted); font-weight: 400; }
 .instance-avatar { position: relative; overflow: hidden; }
 .instance-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .endpoint-account strong, .endpoint-account small { display: block; overflow-wrap: anywhere; }
@@ -686,9 +774,8 @@ button:disabled { opacity: .55; cursor: default; }
     .workspace { padding: 22px 14px 36px; }
     .instances-grid, .overview-resources { grid-template-columns: minmax(0, 1fr); }
     .endpoint-layout { grid-template-columns: minmax(0, 1fr); gap: 13px; }
-    .endpoint-accounts { grid-column: 1; grid-row: 2; }
-    .endpoint-main { grid-column: 1; grid-row: 1; }
     #onebot-accounts { display: flex; flex-wrap: wrap; }
+    .endpoint-account { width: auto; }
     .log-table th, .log-table td { padding: 8px; }
     .log-table th:nth-child(1) { width: 76px; }
     .log-table th:nth-child(2) { width: 82px; }

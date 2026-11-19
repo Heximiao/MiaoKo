@@ -11,7 +11,7 @@ const endpointTypes = {
         description: '下游主动连接 MiaoKo。/ 收发合一，/api 和 /event 分开使用。' },
     reverse: { name: 'reverseWsName', format: 'reverseWsFormat', self: 'reverseWsReportSelf', title: 'WebSocket 客户端', enabled: 'reverseWsEnabled', url: 'reverseWsUrl',
         token: 'reverseWsAccessToken', hasToken: 'hasReverseWsAccessToken',
-        description: 'MiaoKo 为每个监听账号主动连接下游。', placeholder: 'ws://127.0.0.1:6199/ws' },
+        description: 'MiaoKo 使用绑定账号主动连接下游。', placeholder: 'ws://127.0.0.1:6199/ws' },
 };
 
 export function setupOneBotSettings(api) {
@@ -19,6 +19,7 @@ export function setupOneBotSettings(api) {
     const ui = name => byId('onebot-' + name);
     const editor = ui('editor');
     const create = ui('create');
+    const bindLegacy = ui('bind-legacy');
     const result = ui('result');
     const editorSave = ui('editor-save');
     const editorUrl = ui('editor-url');
@@ -39,6 +40,7 @@ export function setupOneBotSettings(api) {
     const cards = new Map();
     let renderedKind;
     let editingId;
+    let editingAccount;
     let settings;
     let loading = false;
     let saving = false;
@@ -46,6 +48,8 @@ export function setupOneBotSettings(api) {
     let editing;
     let accounts = [];
     let accountsKey;
+    let selectedAccount;
+    let renderedAccountsKey;
 
     function localAddress(kind, endpoint) {
         const prefix = endpointTypes[kind].listen;
@@ -65,17 +69,38 @@ export function setupOneBotSettings(api) {
     const endpointLists = { http: 'httpEndpoints', forward: 'forwardWsEndpoints',
         reverse: 'reverseWsEndpoints', 'http-post': 'httpPostEndpoints' };
 
-    function endpoints(kind) {
+    function allEndpoints(kind) {
         if (!settings) return [];
         const spec = endpointTypes[kind];
-        const configured = spec.url ? Boolean(settings[spec.url]) : settings[spec.configured] !== false;
+        const configured = spec.url ? Boolean(settings[spec.url]) : settings[spec.configured] ??
+            Boolean(settings[spec.enabled] || settings[spec.name] || settings[spec.hasToken] ||
+                settings[spec.listen + 'Port'] || settings[spec.listen + 'Bind'] || settings[spec.listen + 'Path'] ||
+                (kind === 'forward' && (settings.forwardWsFormat || settings.forwardWsReportSelf)));
         return settings[endpointLists[kind]] ?? (configured ? [{ ...settings, id: 'default' }] : []);
     }
 
+    function endpoints(kind) {
+        return allEndpoints(kind).filter(entry => (entry.selfId ?? '') === selectedAccount);
+    }
+
+    function accountIds() {
+        return [...new Set([...accounts.map(account => account.selfId), selectedAccount,
+            ...Object.keys(endpointTypes).flatMap(kind => allEndpoints(kind).map(endpoint => endpoint.selfId))]
+            .filter(Boolean))];
+    }
+
+    function hasPendingEndpoints() {
+        return Object.keys(endpointTypes).some(kind => allEndpoints(kind).some(entry => !entry.selfId));
+    }
+
     function statusFor(kind, endpoint) {
+        if (!endpoint.selfId) return ['offline', '待绑定'];
         if (!endpoint[endpointTypes[kind].enabled]) return ['offline', '已停用'];
         const listenError = settings?.listenerErrors?.[kind + ':' + endpoint.id];
         if (listenError) return ['offline', listenError];
+        if (endpoint.selfId && !accounts.some(account => account.selfId === endpoint.selfId)) {
+            return ['offline', '绑定账号未监听'];
+        }
         if (kind === 'reverse') {
             const states = accounts.map(account => account.reverseEndpoints?.[endpoint.id] ??
                 (endpoint.id === 'default' && !account.reverseEndpoints ? account.state : undefined));
@@ -99,10 +124,18 @@ export function setupOneBotSettings(api) {
     function renderEndpoint() {
         const kind = active;
         const spec = endpointTypes[kind];
+        const pending = hasPendingEndpoints();
+        if (settings && selectedAccount === undefined) selectedAccount = accountIds()[0];
         const entries = spec ? endpoints(kind) : [];
         generalSave.disabled = !settings || saving;
-        create.hidden = !settings || !spec;
+        create.hidden = !settings || !spec || !selectedAccount;
         create.disabled = saving;
+        bindLegacy.hidden = !spec || !selectedAccount || !pending;
+        bindLegacy.disabled = saving;
+        ui('scope').textContent = !spec ? '状态指令适用于所有监听账号'
+            : selectedAccount ? '仅用于 QQ ' + selectedAccount
+                : '请先在「QQ 实例」开始监听';
+        renderAccounts();
         for (const count of ui('tabs').querySelectorAll('[data-count]')) {
             count.textContent = settings ? String(endpoints(count.dataset.count).length) : '';
         }
@@ -139,10 +172,10 @@ export function setupOneBotSettings(api) {
                 ? endpoint.hasHttpPostSecret ? '已设置签名密钥' : '未设置签名密钥'
                 : hasToken(spec, endpoint) ? '已设置访问令牌' : '未设置访问令牌';
             const sharesWebUI = spec.listen && endpoint[spec.listen + 'Port'] === undefined;
-            field('node-auth').textContent = sharesWebUI ? '共用 WebUI 端口 · ' + credentials : credentials;
+            field('node-auth').textContent = sharesWebUI ? '使用 WebUI 端口 · ' + credentials : credentials;
             const toggle = field('node-enabled');
             if (!saving) toggle.checked = Boolean(endpoint[spec.enabled]);
-            toggle.disabled = saving;
+            toggle.disabled = saving || !endpoint.selfId;
             toggle.setAttribute('aria-label', '启用 ' + title);
             toggle.onchange = () => updateEnabled(kind, id, toggle.checked);
             field('edit').disabled = saving;
@@ -183,6 +216,22 @@ export function setupOneBotSettings(api) {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change),
         });
     }
+
+    bindLegacy.onclick = async () => {
+        if (!selectedAccount || saving) return;
+        const owner = selectedAccount;
+        saving = true;
+        renderEndpoint();
+        try {
+            await persist({ legacyAccount: owner });
+            result.textContent = '旧端点已迁入 QQ ' + owner;
+        } catch (error) {
+            result.textContent = error.message;
+        } finally {
+            saving = false;
+            renderEndpoint();
+        }
+    };
 
     function resetTokenVisibility() {
         token.type = 'password';
@@ -285,9 +334,10 @@ export function setupOneBotSettings(api) {
     }
 
     function openEditor(id) {
-        if (!settings || saving || !endpointTypes[active]) return;
+        if (!settings || saving || !selectedAccount || !endpointTypes[active]) return;
         editing = active;
         editingId = id;
+        editingAccount = selectedAccount;
         const endpoint = endpoints(editing).find(entry => entry.id === id);
         const spec = endpointTypes[editing];
         const outgoing = Boolean(spec.url);
@@ -347,7 +397,8 @@ export function setupOneBotSettings(api) {
         event.preventDefault();
         if (saving) return;
         const spec = endpointTypes[editing];
-        const change = { [spec.enabled]: ui('editor-enabled').checked, [spec.name]: ui('editor-name').value };
+        const change = { [spec.enabled]: ui('editor-enabled').checked, [spec.name]: ui('editor-name').value,
+            selfId: editingAccount };
         if (spec.format) Object.assign(change, {
             [spec.format]: ui('editor-format').value, [spec.self]: ui('editor-self').checked,
         });
@@ -425,21 +476,46 @@ export function setupOneBotSettings(api) {
         accountsKey = key;
         accounts = entries;
         renderEndpoint();
+    }
+
+    function renderAccounts() {
+        const ids = accountIds();
+        const key = JSON.stringify([accountsKey, selectedAccount, ids]);
+        if (key === renderedAccountsKey) return;
+        renderedAccountsKey = key;
         const container = ui('accounts');
-        const rows = accounts.map(account => {
-            const row = document.createElement('div');
+        const activeAccounts = new Map(accounts.map(account => [account.selfId, account]));
+        const focused = container.contains(document.activeElement) ? document.activeElement.dataset.account : undefined;
+        const rows = ids.map(selfId => {
+            const account = activeAccounts.get(selfId);
+            const row = document.createElement('button');
+            row.type = 'button';
             row.className = 'endpoint-account';
-            const avatar = createQqAvatar(account.selfId);
-            const info = document.createElement('div');
+            row.dataset.account = selfId;
+            row.setAttribute('aria-pressed', String(selfId === selectedAccount));
+            row.onclick = () => {
+                selectedAccount = selfId;
+                if (active === 'general') selectTab(byId('tab-http'));
+                else {
+                    result.textContent = '';
+                    renderEndpoint();
+                }
+            };
+            const info = document.createElement('span');
             const name = document.createElement('strong');
-            name.textContent = account.selfId;
+            name.textContent = selfId;
             const state = document.createElement('small');
-            const reverse = { connected: '反向已连接', connecting: '反向连接中' }[account.state];
-            const callback = { pending: '等待回调', delivered: '回调已送达', failed: '回调失败' }[account.httpPost];
-            state.textContent = [reverse, account.forwardConnections && `正向 ${account.forwardConnections} 路`, callback]
-                .filter(Boolean).join(' · ') || '监听中';
+            if (account) {
+                const reverse = { connected: '反向已连接', connecting: '反向连接中' }[account.state];
+                const callback = { pending: '等待回调', delivered: '回调已送达', failed: '回调失败' }[account.httpPost];
+                state.textContent = [reverse, account.forwardConnections && `正向 ${account.forwardConnections} 路`, callback]
+                    .filter(Boolean).join(' · ') || '监听中';
+            } else {
+                state.textContent = '未监听';
+            }
             info.append(name, state);
-            row.append(avatar, info);
+            row.append(createQqAvatar(selfId));
+            row.append(info);
             return row;
         });
         if (!rows.length) {
@@ -449,6 +525,7 @@ export function setupOneBotSettings(api) {
             rows.push(empty);
         }
         container.replaceChildren(...rows);
+        if (focused !== undefined) rows.find(row => row.dataset.account === focused)?.focus();
     }
 
     return { load, showAccounts };

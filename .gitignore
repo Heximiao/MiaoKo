@@ -3,8 +3,7 @@
 /qq/
 /data/
 /build/*
-!/build/miaoko-duplex-v33.dll
-!/build/miaoko-duplex-v36.dll
+!/build/miaoko-duplex-v46.dll
 !/build/miaoko-group-text.dll
 /src/qq/hook/*.c
 /src/qq/actions/messages/group-text.c

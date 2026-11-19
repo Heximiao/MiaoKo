@@ -9,6 +9,7 @@ export function createForwardWs({ host, accounts, dispatch, onState, basePath = 
     const peers = new Map();
     let enabled = false;
     let token = '';
+    let selfId;
     let behavior = {};
     let addressKey;
 
@@ -33,8 +34,8 @@ export function createForwardWs({ host, accounts, dispatch, onState, basePath = 
         if (denied) return reject(socket, denied.status);
         const available = accounts();
         const chosen = url.searchParams.get('self_id');
-        const account = chosen ?? (available.length === 1 ? available[0] : undefined);
-        if (!account || !available.includes(account)) return reject(socket, 409);
+        const account = selfId ?? chosen ?? (available.length === 1 ? available[0] : undefined);
+        if (!account || (chosen !== null && chosen !== account) || !available.includes(account)) return reject(socket, 409);
 
         server.handleUpgrade(request, socket, head, ws => {
             const events = path !== '/api';
@@ -80,9 +81,11 @@ export function createForwardWs({ host, accounts, dispatch, onState, basePath = 
             const accessToken = config.forwardWsAccessToken ?? config.accessToken;
             const nextAddress = config.forwardWsPort === undefined ? undefined
                 : JSON.stringify([config.forwardWsBind, config.forwardWsPort, config.forwardWsPath]);
-            if (enabled === config.forwardWsEnabled && token === accessToken && addressKey === nextAddress) return;
+            if (enabled === config.forwardWsEnabled && token === accessToken && addressKey === nextAddress &&
+                selfId === config.selfId) return;
             enabled = config.forwardWsEnabled;
             token = accessToken;
+            selfId = config.selfId;
             addressKey = nextAddress;
             disconnect();
         },

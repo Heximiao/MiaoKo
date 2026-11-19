@@ -36,7 +36,16 @@ export function createWebUIAuth(settings, onRateLimit) {
     const attempts = new Map();
     const remoteAttempts = Symbol('remote attempts');
     let busy = false;
+    let closed = false;
+    let edits = Promise.resolve();
     const sessions = new Map();
+
+    function edit(action) {
+        if (closed) return Promise.reject(new WebUIError('MiaoKo 正在停止', 503));
+        const pending = edits.then(action);
+        edits = pending.catch(() => {});
+        return pending;
+    }
 
     function sessionId(request) {
         return readCookie(request, cookie);
@@ -95,83 +104,97 @@ export function createWebUIAuth(settings, onRateLimit) {
         attempts.delete(source);
     }
 
-    async function authenticate(request, response, operation, { username, password, confirmPassword, currentPassword, setupCode },
-        { source = '127.0.0.1', secure = false } = {}) {
+    async function authenticate(...args) {
+        if (closed) throw new WebUIError('MiaoKo 正在停止', 503);
         if (busy) throw new WebUIError('已有登录操作正在处理，请稍后重试', 429);
         busy = true;
         try {
-            const stored = settings.get().password;
-            if (operation === 'verify') {
-                if (stored) throw new WebUIError('初始化已完成，请登录', 409);
-                if (!code) throw new WebUIError('初始化码已使用。请在已验证的浏览器中继续，或重启 MiaoKo 获取新码', 409);
-                await verify(setupCode, code, source, true);
-                setupGrant = { id: randomToken(), secure };
-                code = undefined;
-                setCookie(response, setupCookie, setupGrant.id, undefined, secure);
-                return;
-            }
-            if (operation === 'setup') {
-                if (stored) throw new WebUIError('初始化已完成，请登录', 409);
-                if (!verified(request, secure)) throw new WebUIError('请先验证一次性初始化码', 409);
-                if (typeof username !== 'string' || username.length > 64 || !username.trim() ||
-                    /[\u0000-\u001f\u007f]/.test(username)) throw new WebUIError('用户名须为 1–64 个字符');
-                username = username.trim();
-            }
-            if (operation === 'login' && !stored) throw new WebUIError('请先初始化管理密码', 409);
-            if (operation !== 'login') {
-                validatePassword(password);
-                if (password !== confirmPassword) throw new WebUIError('两次输入的密码不一致');
-            }
-            if (operation !== 'setup') await verify(operation === 'login' ? password : currentPassword, stored, source,
-                operation !== 'login' || (typeof username === 'string' && username.trim() === (settings.get().username ?? 'admin')));
-            if (operation === 'change' && !session(request, secure)) {
-                throw new WebUIError('登录已失效，请重新登录', 401);
-            }
-            if (operation !== 'login') {
-                const salt = randomBytes(16);
-                const hash = await deriveKey(password, salt, 64);
-                if (operation === 'change' && !session(request, secure)) {
-                    throw new WebUIError('登录已失效，请重新登录', 401);
-                }
-                await settings.save({ password: salt.toString('hex') + ':' + hash.toString('hex'),
-                    ...(operation === 'setup' && { username }) });
-                code = undefined;
-                setupGrant = undefined;
-                revokeAll();
-                if (operation === 'setup') setCookie(response, setupCookie, '', 0, secure);
-            }
-            if (operation === 'change') {
-                setCookie(response, cookie, '', 0, secure);
-                return;
-            }
-            revoke(sessionId(request));
-            if (sessions.size >= 64) revoke(sessions.keys().next().value);
-            const id = randomToken();
-            const controller = new AbortController();
-            const timer = setTimeout(() => revoke(id), sessionSeconds * 1000).unref();
-            sessions.set(id, { controller, timer, secure });
-            setCookie(response, cookie, id, sessionSeconds, secure);
+            return await edit(() => authenticateRequest(...args));
         } finally {
             busy = false;
         }
+    }
+
+    async function authenticateRequest(request, response, operation,
+        { username, password, confirmPassword, currentPassword, setupCode },
+        { source = '127.0.0.1', secure = false } = {}) {
+        const stored = settings.get().password;
+        if (operation === 'verify') {
+            if (stored) throw new WebUIError('初始化已完成，请登录', 409);
+            if (!code) throw new WebUIError('初始化码已使用。请在已验证的浏览器中继续，或重启 MiaoKo 获取新码', 409);
+            await verify(setupCode, code, source, true);
+            setupGrant = { id: randomToken(), secure };
+            code = undefined;
+            setCookie(response, setupCookie, setupGrant.id, undefined, secure);
+            return;
+        }
+        if (operation === 'setup') {
+            if (stored) throw new WebUIError('初始化已完成，请登录', 409);
+            if (!verified(request, secure)) throw new WebUIError('请先验证一次性初始化码', 409);
+            if (typeof username !== 'string' || username.length > 64 || !username.trim() ||
+                /[\u0000-\u001f\u007f]/.test(username)) throw new WebUIError('用户名须为 1–64 个字符');
+            username = username.trim();
+        }
+        if (operation === 'login' && !stored) throw new WebUIError('请先初始化管理密码', 409);
+        if (operation !== 'login') {
+            validatePassword(password);
+            if (password !== confirmPassword) throw new WebUIError('两次输入的密码不一致');
+        }
+        if (operation !== 'setup') await verify(operation === 'login' ? password : currentPassword, stored, source,
+            operation !== 'login' || (typeof username === 'string' && username.trim() === (settings.get().username ?? 'admin')));
+        if (operation === 'change' && !session(request, secure)) {
+            throw new WebUIError('登录已失效，请重新登录', 401);
+        }
+        if (operation !== 'login') {
+            const salt = randomBytes(16);
+            const hash = await deriveKey(password, salt, 64);
+            if (operation === 'change' && !session(request, secure)) {
+                throw new WebUIError('登录已失效，请重新登录', 401);
+            }
+            await settings.save({ password: salt.toString('hex') + ':' + hash.toString('hex'),
+                ...(operation === 'setup' && { username }) });
+            code = undefined;
+            setupGrant = undefined;
+            revokeAll();
+            if (operation === 'setup') setCookie(response, setupCookie, '', 0, secure);
+        }
+        if (operation === 'change') {
+            setCookie(response, cookie, '', 0, secure);
+            return;
+        }
+        revoke(sessionId(request));
+        if (sessions.size >= 64) revoke(sessions.keys().next().value);
+        const id = randomToken();
+        const controller = new AbortController();
+        const timer = setTimeout(() => revoke(id), sessionSeconds * 1000).unref();
+        sessions.set(id, { controller, timer, secure });
+        setCookie(response, cookie, id, sessionSeconds, secure);
     }
 
     return {
         code: () => code,
         setupRequired: () => !settings.get().password,
         verified,
-        async reset() {
-            await settings.save({ password: undefined });
-            code = randomToken();
-            setupGrant = undefined;
-            revokeAll();
+        reset() {
+            return edit(async () => {
+                await settings.save({ password: undefined });
+                code = randomToken();
+                setupGrant = undefined;
+                revokeAll();
+            });
         },
         session,
         authenticate,
         logout(request, response, secure = false) {
-            if (session(request, secure)) revoke(sessionId(request));
-            setCookie(response, cookie, '', 0, secure);
+            return edit(() => {
+                if (session(request, secure)) revoke(sessionId(request));
+                setCookie(response, cookie, '', 0, secure);
+            });
         },
-        close: revokeAll,
+        async close() {
+            closed = true;
+            await edits;
+            revokeAll();
+        },
     };
 }

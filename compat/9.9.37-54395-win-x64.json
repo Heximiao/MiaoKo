@@ -9,7 +9,7 @@
       "messageAttributes": "vas-msg-info-v1"
     }
   },
-  "duplexModule": "miaoko-duplex-v36.dll",
+  "duplexModule": "miaoko-duplex-v46.dll",
   "receive": {
     "status": "unverified",
     "candidate": "NodeIKernelMsgListener::onRecvMsg",

@@ -8,7 +8,7 @@ import ffmpegPath from 'ffmpeg-static';
 import { encode } from 'silk-wasm';
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
+export const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 32 * 1024 * 1024;
 const pngSignature = Buffer.from('89504e470d0a1a0a', 'hex');
 const exec = promisify(execFile);

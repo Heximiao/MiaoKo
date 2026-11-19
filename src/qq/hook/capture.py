@@ -14,7 +14,7 @@ sys.path.insert(0, str(project / "src" / "qq"))
 from hook.native_session import NativeSession
 from actions.runtime import PendingAction
 from build_profile import require_build_profile
-from win_account import AccountDetector
+from win_account import AccountDetector, AccountInspectionBusy
 from win_process import api, boolean, dword, find_qq, handle, locate_qq, pointer
 
 
@@ -23,7 +23,7 @@ action_types = {
     "send-message", "recall-message", "get-message", "get-image", "resolve-reply", "resolve-mention",
     "get-group-member", "get-group-member-list", "get-user-profile",
     "get-group-list", "get-group-info", "get-friend-list",
-    "send-poke", "recall-poke", "set-emoji-like", "get-emoji-likes", "resolve-reaction",
+    "send-poke", "send-poke-batch", "recall-poke", "set-emoji-like", "get-emoji-likes", "resolve-reaction",
     "get-message-history", "send-profile-like", "get-profile-like",
     "get-forward-message", "send-forward-message",
     "get-group-root-files", "get-group-file-url", "create-group-file-folder",
@@ -114,6 +114,8 @@ def main():
         return
     commands = ParentCommands(sys.stdin.fileno())
     pending = {}
+    check_due = None
+    check_deadline = None
     try:
         with NativeSession(pid, build / (duplex_module if duplex else "miaoko-receive.dll"),
                            int(hook["callRva"], 16), bytes.fromhex(hook["instruction"]),
@@ -124,6 +126,19 @@ def main():
                 pending[watch["id"]] = PendingAction(project, watch, profile, module, account)
             deadline = monotonic() + args.seconds if args.seconds is not None else None
             while session.is_running():
+                if check_due is not None and monotonic() >= check_due:
+                    try:
+                        current = detector.current()
+                    except AccountInspectionBusy:
+                        if monotonic() >= check_deadline:
+                            report("account-unresolved", pid)
+                            break
+                        check_due = monotonic() + 0.25
+                    else:
+                        check_due = None
+                        report("account-check", pid, selfId=current)
+                        if current != account:
+                            break
                 for action in list(pending.values()):
                     outcome = action.poll(session, detector, account)
                     if outcome:
@@ -147,10 +162,8 @@ def main():
                 if command == "stop":
                     break
                 if command == "check":
-                    current = detector.current()
-                    report("account-check", pid, selfId=current)
-                    if current != account:
-                        break
+                    check_due = monotonic()
+                    check_deadline = check_due + 10
                 elif (not duplex or len(pending) >= 5 or command["selfId"] != account
                       or (command["type"] == "send-message" and
                           any(action.type == "send-message" for action in pending.values()))):
